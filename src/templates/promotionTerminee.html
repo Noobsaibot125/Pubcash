@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        /* Styles pour la compatibilité maximale avec les clients e-mail */
+        body { margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f4f4; }
+        .container { max-width: 600px; margin: 20px auto; background-color: #ffffff; border: 1px solid #dddddd; }
+        .header { background-color: #FF7F00; padding: 20px; text-align: center; }
+        .header h1 { color: #ffffff; margin: 0; font-size: 24px; }
+        .content { 
+            padding: 30px; 
+            color: #333333; 
+            line-height: 1.6; 
+        }
+        /* MODIFICATION: Changement du nom de la classe pour plus de clarté */
+        .details-list { list-style: none; padding: 0; margin: 0; }
+        .details-list li { margin-bottom: 10px; }
+        .button-container { text-align: center; margin-top: 30px; }
+        .button { background-color:#008a4c; color: #ffffff; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold; }
+        .footer { padding: 20px; text-align: center; color: #777777; font-size: 12px; }
+        
+        /* MODIFICATION: Styles pour le thumbnail et la nouvelle disposition */
+        .thumbnail { width: 150px; height: auto; border: 1px solid #cccccc; }
+        .layout-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        .details-cell { vertical-align: top; padding-right: 20px; }
+        .thumbnail-cell { width: 150px; vertical-align: top; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>PROMOTION TERMINÉE</h1>
+        </div>
+        <!-- AJOUT DU STYLE POUR L'IMAGE DE FOND ICI -->
+        <div class="content" style="background-image: url('{{pubcashLogoUrl}}'); background-position: center; background-repeat: no-repeat; background-size: contain;">
+            <p>Bonjour <strong>{{clientName}}</strong>,</p>
+            <p>Nous vous informons que votre promotion «&nbsp;{{promotionTitle}}&nbsp;» est arrivée à son terme.</p>
+            
+            <h3>📌 Détails de la promotion :</h3>
+
+            <!-- DEBUT DE L'ADAPTATION : Table pour aligner les détails et le thumbnail -->
+            <table class="layout-table">
+                <tr>
+                    <td class="details-cell">
+                        <ul class="details-list">
+                            <li><strong>TITRE :</strong> {{promotionTitle}}</li>
+                            <li><strong>DESCRIPTION :</strong> {{promotionDescription}}</li>
+                            <li><strong>DATE DE FIN :</strong> {{promotionEndDate}}</li>
+                        </ul>
+                    </td>
+                    <td class="thumbnail-cell">
+                        <!-- Le thumbnail est maintenant ici -->
+                        <img src="{{thumbnailUrl}}" alt="Aperçu de la promotion" class="thumbnail">
+                    </td>
+                </tr>
+            </table>
+            <!-- FIN DE L'ADAPTATION -->
+
+            <p style="margin-top: 20px;">Vous pouvez dès maintenant consulter les résultats liés à votre campagne en cliquant sur le lien ci-dessous :</p>
+            
+            <div class="button-container">
+                <a href="{{historyLink}}" class="button">👉 Consulter les résultats de ma promotion</a>
+            </div>
+
+            <p style="margin-top: 30px;">Nous vous remercions de votre confiance et restons disponibles pour toute question ou assistance.</p>
+            
+            <p>Cordialement,<br><strong>L'ÉQUIPE PUBCASH</strong></p>
+        </div>
+        <div class="footer">
+            © 2025 PubCash. Tous droits réservés.
+        </div>
+    </div>
+</body>
+</html>

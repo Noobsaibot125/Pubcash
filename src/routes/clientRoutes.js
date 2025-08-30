@@ -1,19 +1,31 @@
-// pubcash-api/src/routes/clientRoutes.js
 const express = require('express');
 const router = express.Router();
 const imageUploadController = require('../controllers/imageUploadController');
 const clientController = require('../controllers/clientController');
-const authMiddleware = require('../middlewares/authMiddleware');
 
-// On commente les deux routes pour le test
- router.get('/profile', authMiddleware, clientController.getProfile);
- router.put('/profile', authMiddleware, clientController.updateProfile);
- router.post('/recharge', authMiddleware, clientController.rechargeAccount);
-// Route pour créer une promotion
-router.post('/promotions', authMiddleware, clientController.createPromotion);
-router.get('/promotions', authMiddleware, clientController.getClientPromotions);
-router.get('/global-stats', authMiddleware, clientController.getGlobalStats);
-router.post('/upload-profile-image', authMiddleware, imageUploadController.uploadProfileImage);
-router.post('/upload-background-image', authMiddleware, imageUploadController.uploadBackgroundImage);
-router.get('/promotions/history', authMiddleware, clientController.getPromotionHistory);
+// CORRECTION : On importe 'protect' depuis le middleware avec la déstructuration
+const { protect } = require('../middlewares/authMiddleware');
+
+// On remplace partout 'authMiddleware' par 'protect'
+
+// Profil
+router.get('/profile', protect, clientController.getProfile);
+router.put('/profile', protect, clientController.updateProfile);
+
+// Recharge
+router.post('/recharge', protect, clientController.rechargeAccount);
+router.post('/recharge/verify', protect, clientController.verifyRecharge);
+
+// Promotions
+router.post('/promotions', protect, clientController.createPromotion);
+router.get('/promotions', protect, clientController.getClientPromotions);
+router.get('/promotions/history', protect, clientController.getPromotionHistory);
+
+// Stats
+router.get('/global-stats', protect, clientController.getGlobalStats);
+
+// Upload images
+router.post('/upload-profile-image', protect, ...imageUploadController.uploadProfileImageForClient);
+router.post('/upload-background-image', protect, ...imageUploadController.uploadBackgroundImageForClient);
+
 module.exports = router;

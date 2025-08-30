@@ -1,33 +1,76 @@
-// pubcash-api/src/middlewares/authMiddleware.js
-
 const jwt = require('jsonwebtoken');
+const pool = require('../config/db');
 
-// 1. On définit la fonction avec le nom standard "authMiddleware"
-const authMiddleware = (req, res, next) => {
+// CORRECTION : On renomme la fonction de 'authMiddleware' à 'protect'
+const protect = async (req, res, next) => {
   try {
-    const authHeader = req.headers.authorization || req.headers.Authorization;
-    if (!authHeader) {
-      return res.status(401).json({ message: 'Token manquant' });
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ message: 'Accès non autorisé, token manquant.' });
     }
+    const token = authHeader.split(' ')[1];
 
-    const parts = authHeader.split(' ');
-    if (parts.length !== 2 || parts[0] !== 'Bearer') {
-      return res.status(401).json({ message: 'Format d\'autorisation invalide' });
-    }
-
-    const token = parts[1];
-    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-      if (err) {
-        return res.status(401).json({ message: 'Token invalide' });
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    let user;
+    
+    // La logique interne pour trouver l'utilisateur est correcte
+    if (decoded.role === 'admin' || decoded.role === 'superadmin') {
+      const [rows] = await pool.execute(
+        'SELECT id, nom_utilisateur, email, role FROM administrateurs WHERE id = ?',
+        [decoded.id]
+      );
+      user = rows[0];
+    } else if (decoded.role === 'client') {
+      const [rows] = await pool.execute(
+        'SELECT id, nom_utilisateur, email, role, commune FROM clients WHERE id = ?',
+        [decoded.id]
+      );
+      user = rows[0];
+      if (user) {
+        user.commune_choisie = user.commune;
       }
-      req.user = decoded; // { id, email, role }
-      next();
-    });
+    } else if (decoded.role === 'utilisateur') {
+      const [rows] = await pool.execute(
+        'SELECT id, nom_utilisateur, email, commune_choisie, date_naissance FROM utilisateurs WHERE id = ?',
+        [decoded.id]
+      );
+      user = rows[0];
+      if (user) {
+        user.role = 'utilisateur';
+      }
+    }
+
+    if (!user) {
+      return res.status(401).json({ message: 'Utilisateur associé au token non trouvé.' });
+    }
+
+    req.user = user;
+    next();
+    
   } catch (err) {
-    console.error('authMiddleware error', err);
-    res.status(500).json({ message: 'Erreur serveur' });
+    console.error('authMiddleware error:', err);
+    if (err.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'Token expiré.' });
+    }
+    return res.status(401).json({ message: 'Token invalide.' });
   }
 };
 
-// 2. On exporte la fonction que nous venons de définir
-module.exports = authMiddleware;
+// La fonction 'authorize' est correcte
+const authorize = (...roles) => {
+  return (req, res, next) => {
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({ 
+        message: `Accès refusé. Le rôle '${req.user.role}' n'est pas autorisé à accéder à cette ressource.` 
+      });
+    }
+    next();
+  };
+};
+
+// L'export est maintenant correct car 'protect' est bien défini juste au-dessus
+module.exports = {
+  protect,
+  authorize
+};

@@ -141,3 +141,173 @@ exports.deleteClient = async (req, res) => {
       res.status(500).json({ message: 'Erreur serveur' });
   }
 };
+
+// Nouvelle fonction pour récupérer les demandes de retrait
+exports.getWithdrawalRequests = async (req, res) => {
+    const { status } = req.query;
+    
+    try {
+        // 1. On modifie la requête SQL
+        let query = `
+            SELECT 
+                dr.id, dr.montant, dr.statut, dr.date_demande, dr.date_traitement,
+                dr.operateur_mobile, -- On ajoute l'opérateur
+                u.nom_utilisateur AS utilisateur, 
+                u.email, 
+                u.contact AS telephone,
+                -- On fait une jointure sur la table administrateurs pour récupérer le nom
+                -- On utilise LEFT JOIN au cas où id_admin est NULL (demande en attente)
+                admin.nom_utilisateur AS admin_processor 
+            FROM demandes_retrait dr
+            JOIN utilisateurs u ON dr.id_utilisateur = u.id
+            LEFT JOIN administrateurs admin ON dr.id_admin = admin.id
+        `;
+        
+        const params = [];
+        
+        if (status) {
+            query += ` WHERE dr.statut = ?`;
+            params.push(status);
+        }
+        
+        query += ` ORDER BY dr.date_demande DESC`;
+        
+        const [requests] = await pool.execute(query, params);
+        res.status(200).json(requests);
+    } catch (error) {
+        console.error("Erreur getWithdrawalRequests:", error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+};
+
+// Fonction pour traiter une demande de retrait
+exports.processWithdrawalRequest = async (req, res) => {
+    const { requestId } = req.params;
+    const { status } = req.body;
+    const adminId = req.user.id;
+  
+    if (!status || !['traite', 'rejete'].includes(status)) {
+      return res.status(400).json({ message: 'Statut invalide. Doit être "traite" ou "rejete".' });
+    }
+  
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+  
+      const [requestRows] = await connection.execute(
+        'SELECT * FROM demandes_retrait WHERE id = ? AND statut = "en_attente" FOR UPDATE',
+        [requestId]
+      );
+      
+      if (requestRows.length === 0) {
+        await connection.rollback();
+        return res.status(404).json({ message: 'Demande non trouvée ou déjà traitée.' });
+      }
+      
+      const request = requestRows[0];
+      
+      await connection.execute(
+        'UPDATE demandes_retrait SET statut = ?, date_traitement = NOW(), id_admin = ? WHERE id = ?',
+        [status, adminId, requestId]
+      );
+      
+      if (status === 'rejete') {
+        await connection.execute(
+          'UPDATE utilisateurs SET remuneration_utilisateur = remuneration_utilisateur + ? WHERE id = ?',
+          [request.montant, request.id_utilisateur]
+        );
+      }
+      
+      await connection.commit();
+      
+      // Émettre l'événement WebSocket
+      const io = req.app.get('io');
+      io.to(`user-${request.id_utilisateur}`).emit('withdrawal-updated', {
+        requestId: requestId,
+        status: status
+      });
+      
+      res.status(200).json({ message: `Demande ${status === 'traite' ? 'traitée' : 'rejetée'} avec succès.` });
+    } catch (error) {
+      await connection.rollback();
+      console.error("Erreur processWithdrawalRequest:", error);
+      res.status(500).json({ message: 'Erreur serveur' });
+    } finally {
+      connection.release();
+    }
+  };
+
+// Récupérer la liste de tous les admins
+exports.getAllAdmins = async (req, res) => {
+    try {
+        // On exclut le mot de passe pour la sécurité
+        const [admins] = await pool.execute('SELECT id, nom_utilisateur, email, role, photo, date_creation FROM administrateurs');
+        res.status(200).json(admins);
+    } catch (error) {
+        console.error("Erreur getAllAdmins:", error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+};
+
+// Créer un nouvel administrateur (role = 'admin')
+exports.createAdmin = async (req, res) => {
+    const { nom_utilisateur, email, mot_de_passe } = req.body;
+
+    if (!nom_utilisateur || !email || !mot_de_passe) {
+        return res.status(400).json({ message: 'Tous les champs sont requis.' });
+    }
+
+    try {
+        // Vérifier si l'email est déjà utilisé
+        const [existing] = await pool.execute('SELECT id FROM administrateurs WHERE email = ?', [email]);
+        if (existing.length > 0) {
+            return res.status(409).json({ message: 'Cet email est déjà utilisé.' });
+        }
+
+        const hashedPassword = await bcrypt.hash(mot_de_passe, 10);
+        
+        // On insère le nouvel utilisateur avec le rôle 'admin'
+        await pool.execute(
+            'INSERT INTO administrateurs (nom_utilisateur, email, mot_de_passe, role) VALUES (?, ?, ?, ?)',
+            [nom_utilisateur, email, hashedPassword, 'admin']
+        );
+
+        res.status(201).json({ message: 'Administrateur créé avec succès !' });
+    } catch (error) {
+        console.error("Erreur createAdmin:", error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+};
+
+// Supprimer un administrateur
+exports.deleteAdmin = async (req, res) => {
+    const { id } = req.params;
+    const superAdminId = req.user.id; // L'ID du superadmin qui fait la requête
+
+    if (parseInt(id, 10) === superAdminId) {
+        return res.status(400).json({ message: 'Vous ne pouvez pas supprimer votre propre compte.' });
+    }
+
+    try {
+        const [result] = await pool.execute('DELETE FROM administrateurs WHERE id = ?', [id]);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Administrateur non trouvé.' });
+        }
+        res.status(200).json({ message: 'Administrateur supprimé avec succès.' });
+    } catch (error) {
+        console.error("Erreur deleteAdmin:", error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+};
+
+exports.getOnlineUsers = async (req, res) => {
+  try {
+    const [users] = await pool.execute(
+      'SELECT id, nom_utilisateur, email, photo_profil, derniere_connexion FROM utilisateurs WHERE est_en_ligne = 1'
+    );
+    res.status(200).json(users);
+  } catch (error) {
+    console.error("Erreur getOnlineUsers:", error);
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
+};

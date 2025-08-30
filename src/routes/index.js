@@ -7,10 +7,12 @@ const videoRoutes = require('./videoRoutes');
 const authRoutes = require('./authRoutes');
 const adminRoutes = require('./adminRoutes');
 const clientRoutes = require('./clientRoutes');
+const userRoutes = require('./userRoutes');
 
 router.use('/auth', authRoutes);
 router.use('/admin', adminRoutes);
 router.use('/client', clientRoutes);
 router.use('/videos', videoRoutes);
 router.use('/promotions', promotionRoutes);
+router.use('/user', userRoutes);
 module.exports = router;
