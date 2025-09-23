@@ -26,7 +26,9 @@ const server = http.createServer(app);
 // 1. Définir la liste des origines autorisées (whitelist)
 const allowedOrigins = [
   'http://localhost:3000',      // Pour votre développement local
-  'http://31.197.199.78'       // Pour votre serveur de production
+  'http://31.197.199.78'  ,
+   'http://31.197.199.78:3000', // Frontend sur port 3000
+  'http://31.197.199.78:5000'  // Backend lui-même     // Pour votre serveur de production
 ];
 
 // 2. Créer les options de configuration CORS
