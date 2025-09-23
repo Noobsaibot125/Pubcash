@@ -1,3 +1,7 @@
+// ======================================================
+// --- server.js - Version corrigée pour la production ---
+// ======================================================
+
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
@@ -15,12 +19,34 @@ const pool = require('./src/config/db');
 const app = express();
 const server = http.createServer(app);
 
-// --- Configuration de Socket.IO ---
-const io = new Server(server, {
-  cors: {
-    origin: "http://localhost:3000",
-    methods: ["GET", "POST"]
+// ======================================================
+// --- NOUVELLE CONFIGURATION CORS FLEXIBLE ---
+// ======================================================
+
+// 1. Définir la liste des origines autorisées (whitelist)
+const allowedOrigins = [
+  'http://localhost:3000',      // Pour votre développement local
+  'http://31.197.199.78'       // Pour votre serveur de production
+];
+
+// 2. Créer les options de configuration CORS
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Autoriser les requêtes sans origine (ex: Postman, apps mobiles) ou celles dans la whitelist
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      // Rejeter les requêtes qui ne sont pas dans la whitelist
+      callback(new Error('Cette origine n\'est pas autorisée par la politique CORS.'));
+    }
   }
+};
+
+// ======================================================
+
+// --- Configuration de Socket.IO avec la nouvelle politique CORS ---
+const io = new Server(server, {
+  cors: corsOptions
 });
 
 // Rend 'io' accessible dans toute l'application via req.app.get('io')
@@ -38,7 +64,8 @@ requiredDirs.forEach(dir => {
 });
 
 // --- MIDDLEWARES ---
-app.use(cors({ origin: 'http://localhost:3000' }));
+// Appliquer la politique CORS à toutes les routes HTTP
+app.use(cors(corsOptions)); 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -163,7 +190,6 @@ io.on('connection', (socket) => {
 
 // --- DÉMARRAGE DU SERVEUR ---
 const PORT = process.env.PORT || process.env.API_PORT || 5000;
-// const PORT = process.env.API_PORT || 5000;
 server.listen(PORT, () => {
   console.log(`Serveur démarré et écoute sur le port ${PORT}`);
 });
