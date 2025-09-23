@@ -162,7 +162,8 @@ io.on('connection', (socket) => {
 });
 
 // --- DÉMARRAGE DU SERVEUR ---
-const PORT = process.env.API_PORT || 5000;
+const PORT = process.env.PORT || process.env.API_PORT || 5000;
+// const PORT = process.env.API_PORT || 5000;
 server.listen(PORT, () => {
   console.log(`Serveur démarré et écoute sur le port ${PORT}`);
 });
