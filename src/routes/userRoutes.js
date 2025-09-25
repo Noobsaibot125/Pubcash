@@ -17,17 +17,8 @@ router.put('/profile', protect, userController.updateProfileForUser);
 // il faut le déplier avec spread operator (...) pour fournir des fonctions séparées au routeur.
 
 // Route pour l'image de profil (utilisateurs)
-router.post(
-  '/upload-profile-image',
-  protect,
-  ...imageUploadController.uploadProfileImageForUser
-);
+router.post('/upload-profile-image', protect, ...imageUploadController.uploadProfileImageForUser);
+router.post('/upload-background-image', protect, ...imageUploadController.uploadBackgroundImageForUser);
 
-// Route pour l'image de fond (utilisateurs)
-router.post(
-  '/upload-background-image',
-  protect,
-  ...imageUploadController.uploadBackgroundImageForUser
-);
 
 module.exports = router;
