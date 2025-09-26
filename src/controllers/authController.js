@@ -59,31 +59,34 @@ const sendOtpEmail = async (email, otp) => {
   
   // --- FONCTION REGISTERCLIENT MISE À JOUR ---
   exports.registerClient = async (req, res) => {
-      const { nom, prenom, nom_utilisateur, email, mot_de_passe, commune } = req.body;
-      
-      try {
-          const hashedPassword = await bcrypt.hash(mot_de_passe, 10);
-          const otp = Math.floor(10000 + Math.random() * 90000).toString(); // Génère un code à 5 chiffres
-          const otpExpiration = new Date(Date.now() + 10 * 60 * 1000); // Valide pour 10 minutes
-  
-          const [result] = await pool.execute(
-              'INSERT INTO clients (nom, prenom, nom_utilisateur, email, mot_de_passe, commune, otp_code, otp_expiration) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-              [nom, prenom, nom_utilisateur, email, hashedPassword, commune, otp, otpExpiration]
-          );
-          
-          await sendOtpEmail(email, otp);
-  
-          res.status(201).json({ message: 'Promoteur inscrit. Veuillez vérifier votre email pour le code OTP.', email: email });
-  
-      } catch (error) {
-          if (error.code === 'ER_DUP_ENTRY') {
-              return res.status(409).json({ message: 'Cet email est déjà utilisé.' });
-          }
-          console.error("Erreur registerClient:", error);
-          res.status(500).json({ message: 'Erreur serveur' });
-      }
-  };
-  
+    const { nom, prenom, nom_utilisateur, email, mot_de_passe, telephone, commune } = req.body;
+
+    if (!nom || !prenom || !nom_utilisateur || !email || !mot_de_passe || !telephone || !commune) {
+        return res.status(400).json({ message: 'Tous les champs sont requis.' });
+    }
+
+    try {
+        const hashedPassword = await bcrypt.hash(mot_de_passe, 10);
+        const otp = Math.floor(10000 + Math.random() * 90000).toString(); 
+        const otpExpiration = new Date(Date.now() + 10 * 60 * 1000); 
+
+        const [result] = await pool.execute(
+            `INSERT INTO clients (nom, prenom, nom_utilisateur, email, telephone, mot_de_passe, commune, otp_code, otp_expiration) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [nom, prenom, nom_utilisateur, email, telephone, hashedPassword, commune, otp, otpExpiration]
+        );
+
+        await sendOtpEmail(email, otp);
+
+        res.status(201).json({ message: 'Promoteur inscrit. Veuillez vérifier votre email pour le code OTP.', email });
+    } catch (error) {
+        if (error.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ message: 'Cet email ou téléphone est déjà utilisé.' });
+        }
+        console.error("Erreur registerClient:", error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+};
   // --- NOUVELLE FONCTION POUR VÉRIFIER L'OTP ---
   exports.verifyOtp = async (req, res) => {
     const { email, otp } = req.body;

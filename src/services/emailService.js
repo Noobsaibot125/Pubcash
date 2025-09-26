@@ -42,22 +42,20 @@ exports.sendPromotionFinishedEmail = async (client, promotion) => {
         // --- CORRECTION CLÉ ---
         // On définit la baseUrl ICI, en se basant sur l'environnement.
         const baseUrl = process.env.NODE_ENV === 'production' 
-            ? process.env.PRODUCTION_URL 
-            : process.env.DEVELOPMENT_URL;
-
-        const templateData = {
-            clientName: client.nom || 'Client',
-            promotionTitle: promotion.titre,
-            promotionDescription: promotion.description || 'Aucune description',
-            promotionEndDate: new Date().toLocaleDateString('fr-FR', {
-                year: 'numeric', month: 'long', day: 'numeric'
-            }),
-            historyLink: 'http://localhost:3000/client/historique',
-            thumbnailUrl: promotion.thumbnail_url, // L'URL complète du thumbnail est déjà passée par le contrôleur
-            
-            // Maintenant, cette ligne fonctionne car baseUrl est définie juste au-dessus
-            pubcashLogoUrl: `${baseUrl}/uploads/pubcash-logo.png` 
-        };
+        ? process.env.PRODUCTION_URL 
+        : process.env.DEVELOPMENT_URL;
+    
+    const templateData = {
+        clientName: client.nom || 'Client',
+        promotionTitle: promotion.titre,
+        promotionDescription: promotion.description || 'Aucune description',
+        promotionEndDate: new Date().toLocaleDateString('fr-FR', {
+            year: 'numeric', month: 'long', day: 'numeric'
+        }),
+        historyLink: `${baseUrl}/client/historique`,
+        thumbnailUrl: promotion.thumbnail_url,
+        pubcashLogoUrl: `${baseUrl}/uploads/pubcash-logo.png`
+    };
         
         const htmlContent = createEmailHtml('promotionTerminee', templateData);
 

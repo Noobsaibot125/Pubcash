@@ -57,43 +57,51 @@ exports.getProfile = async (req, res) => {
     res.status(500).json({ message: 'Erreur serveur' });
   }
 };
+// pubcash-api/src/controllers/clientController.js
 exports.updateProfile = async (req, res) => {
-    const clientId = req.user.id;
-    // CORRECTION : Ajout de 'telephone' à la déstructuration
-    const { nom, prenom, nom_utilisateur, telephone, description, newPassword, currentPassword } = req.body;
+  const clientId = req.user.id;
+  const { nom, prenom, nom_utilisateur, telephone, description, newPassword, currentPassword } = req.body;
 
-    try {
-        // Validation des champs de base
-        if (!nom || !prenom || !nom_utilisateur) {
-            return res.status(400).json({ message: 'Le nom, le prénom et le nom d\'utilisateur sont requis.' });
-        }
-
-        // CORRECTION : Ajout de 'telephone' dans la requête UPDATE
-        await pool.execute(
-            'UPDATE clients SET nom = ?, prenom = ?, nom_utilisateur = ?, telephone = ?, description = ? WHERE id = ?',
-            [nom, prenom, nom_utilisateur, telephone || null, description || null, clientId]
-        );
-
-        // Logique de mise à jour du mot de passe (inchangée)
-        if (newPassword && currentPassword) {
-            const [rows] = await pool.execute('SELECT mot_de_passe FROM clients WHERE id = ?', [clientId]);
-            const user = rows[0];
-
-            const isMatch = await bcrypt.compare(currentPassword, user.mot_de_passe);
-            if (!isMatch) {
-                return res.status(401).json({ message: 'Le mot de passe actuel est incorrect.' });
-            }
-
-            const hashedNewPassword = await bcrypt.hash(newPassword, 10);
-            await pool.execute('UPDATE clients SET mot_de_passe = ? WHERE id = ?', [hashedNewPassword, clientId]);
-        }
-
-        res.status(200).json({ message: 'Profil mis à jour avec succès !' });
-
-    } catch (error) {
-        console.error("Erreur updateProfile:", error);
-        res.status(500).json({ message: 'Erreur serveur' });
+  try {
+    // Validation basique
+    if (!nom || !prenom || !nom_utilisateur) {
+      return res.status(400).json({ message: "Le nom, le prénom et le nom d'utilisateur sont requis." });
     }
+
+    // Si un currentPassword est fourni, vérifier sa validité AVANT toute mise à jour
+    if (currentPassword) {
+      const [rows] = await pool.execute('SELECT mot_de_passe FROM clients WHERE id = ?', [clientId]);
+      if (!rows || rows.length === 0) {
+        return res.status(404).json({ message: 'Client non trouvé.' });
+      }
+      const user = rows[0];
+      const isMatch = await bcrypt.compare(currentPassword, user.mot_de_passe);
+      if (!isMatch) {
+        return res.status(401).json({ message: "Mot de passe incorrect." });
+      }
+      // si match => on continue (on vérifiera plus tard si changement de mot de passe demandé)
+    } else {
+      // Si aucune confirmation n'est fournie, on refuse la mise à jour (contrainte de sécurité)
+      return res.status(400).json({ message: "Veuillez confirmer votre mot de passe pour enregistrer les modifications." });
+    }
+
+    // À ce stade, currentPassword est valide : on peut mettre à jour les informations
+    await pool.execute(
+      'UPDATE clients SET nom = ?, prenom = ?, nom_utilisateur = ?, telephone = ?, description = ? WHERE id = ?',
+      [nom, prenom, nom_utilisateur, telephone || null, description || null, clientId]
+    );
+
+    // Si l'utilisateur souhaite changer son mot de passe (newPassword fourni), effectuer la mise à jour
+    if (newPassword) {
+      const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+      await pool.execute('UPDATE clients SET mot_de_passe = ? WHERE id = ?', [hashedNewPassword, clientId]);
+    }
+
+    return res.status(200).json({ message: 'Profil mis à jour avec succès !' });
+  } catch (error) {
+    console.error("Erreur updateProfile:", error);
+    return res.status(500).json({ message: 'Erreur serveur' });
+  }
 };
 
 
@@ -371,88 +379,161 @@ exports.getPromotionHistory = async (req, res) => {
  * - renvoie: { payment_url, transaction_id }
  */
 exports.rechargeAccount = async (req, res) => {
-    console.log("Configuration CinetPay:");
-    console.log("CINETPAY_SITE_ID:", CINETPAY_SITE_ID);
-    console.log("CINETPAY_APIKEY:", CINETPAY_APIKEY ? "***" + CINETPAY_APIKEY.slice(-4) : "non définie");
-    
-    const { amount } = req.body;
-    if (!req.user || !req.user.id) {
-        return res.status(401).json({ message: 'Utilisateur non authentifié.' });
-    }
-    
-    const clientId = req.user.id;
-    // NE PAS utiliser req.user directement pour les infos volatiles comme le téléphone.
+  console.log("=== Configuration CinetPay ===");
+  console.log("CINETPAY_SITE_ID:", CINETPAY_SITE_ID);
+  console.log("CINETPAY_APIKEY:", CINETPAY_APIKEY ? "***" + CINETPAY_APIKEY.slice(-4) : "non définie");
+  console.log("BASE_URL:", BASE_URL);
+  
+  const { amount } = req.body;
+  if (!req.user || !req.user.id) {
+      return res.status(401).json({ message: 'Utilisateur non authentifié.' });
+  }
+  
+  const clientId = req.user.id;
 
-    if (!amount || isNaN(amount) || Number(amount) <= 0) {
-        return res.status(400).json({ message: 'Le montant doit être un nombre positif.' });
-    }
-    if (Number(amount) < 100) {
-        return res.status(400).json({ message: 'Le montant minimum est de 100 FCFA' });
-    }
+  // Validation du montant
+  if (!amount || isNaN(amount) || Number(amount) <= 0) {
+      return res.status(400).json({ message: 'Le montant doit être un nombre positif.' });
+  }
+  if (Number(amount) < 100) {
+      return res.status(400).json({ message: 'Le montant minimum est de 100 FCFA' });
+  }
 
-    if (!CINETPAY_APIKEY || !CINETPAY_SITE_ID) {
-        console.error('CinetPay config manquante');
-        return res.status(500).json({ message: 'Configuration CinetPay incomplète' });
-    }
+  // Vérification de la configuration CinetPay
+  if (!CINETPAY_APIKEY || !CINETPAY_SITE_ID) {
+      console.error('❌ Configuration CinetPay manquante');
+      return res.status(500).json({ 
+          message: 'Configuration du système de paiement incomplète' 
+      });
+  }
 
-    try {
-        // --- CORRECTION : Récupérer les informations à jour de l'utilisateur ---
-        const [userRows] = await pool.execute(
-            'SELECT nom, prenom, email, telephone, commune FROM clients WHERE id = ?',
-            [clientId]
-        );
+  try {
+      // Récupération des informations utilisateur fraîches
+      const [userRows] = await pool.execute(
+          'SELECT nom, prenom, email, telephone, commune FROM clients WHERE id = ?',
+          [clientId]
+      );
 
-        if (userRows.length === 0) {
-            return res.status(404).json({ message: 'Client non trouvé.' });
-        }
-        const user = userRows[0]; // 'user' contient maintenant les données fraîches de la BDD
+      if (userRows.length === 0) {
+          return res.status(404).json({ message: 'Client non trouvé.' });
+      }
+      
+      const user = userRows[0];
 
-        // On peut maintenant vérifier le téléphone sur les données à jour
-        if (!user.telephone) {
-            return res.status(400).json({ message: 'Veuillez renseigner votre numéro de téléphone dans votre profil avant de recharger.' });
-        }
-        // --- FIN DE LA CORRECTION ---
+      // Vérification du numéro de téléphone
+      if (!user.telephone) {
+          return res.status(400).json({ 
+              message: 'Veuillez renseigner votre numéro de téléphone dans votre profil avant de recharger.' 
+          });
+      }
 
+      // --- CORRECTION : VALIDATION PLUS FLEXIBLE POUR LES 3 FORMATS ---
+      let formattedPhone = user.telephone.trim();
+      
+      // Supprimer tous les espaces et caractères spéciaux
+      formattedPhone = formattedPhone.replace(/\s+/g, '').replace(/[^\d+]/g, '');
+      
+      // Fonction de validation améliorée pour accepter les 3 formats
+      const isValidPhone = (phone) => {
+          // Format 1: +225XXXXXXXXX (13 caractères)
+          if (phone.startsWith('+225') && phone.length === 13) return true;
+          // Format 2: 225XXXXXXXXX (12 caractères)
+          if (phone.startsWith('225') && phone.length === 12) return true;
+          // Format 3: XXXXXXXXX (10 chiffres - format local)
+          if (/^\d{10}$/.test(phone)) return true;
+          return false;
+      };
 
-        const transactionId = `RECH_${clientId}_${Date.now()}`;
+      if (!isValidPhone(formattedPhone)) {
+          return res.status(400).json({ 
+              message: 'Numéro de téléphone invalide. Formats acceptés: +225XXXXXXXXX, 225XXXXXXXXX ou XXXXXXXXX (10 chiffres)' 
+          });
+      }
 
-        await ensureCinetpayTable();
-        
-        await pool.execute(
-            'INSERT INTO cinetpay_transactions (transaction_id, client_id, amount, status) VALUES (?, ?, ?, ?)',
-            [transactionId, clientId, Number(amount), 'PENDING']
-        );
+      // Normalisation vers le format CinetPay attendu (+225XXXXXXXXX)
+      if (formattedPhone.startsWith('225') && formattedPhone.length === 12) {
+          formattedPhone = '+' + formattedPhone; // 225... -> +225...
+      } else if (/^\d{10}$/.test(formattedPhone)) {
+          formattedPhone = '+225' + formattedPhone; // XXXXXXXXX -> +225XXXXXXXXX
+      }
+      // Si déjà +225..., on laisse tel quel
 
-        // Retourner les données nécessaires pour le SDK client en utilisant l'objet 'user' à jour
-        res.status(200).json({
-            message: 'Paiement initialisé',
-            cinetpay_config: {
-                apikey: CINETPAY_APIKEY,
-                site_id: CINETPAY_SITE_ID,
-                notify_url: `${BASE_URL}/webhook/cinetpay`,
-                mode: 'PRODUCTION'
-            },
-            checkout_data: {
-                transaction_id: transactionId,
-                amount: Number(amount),
-                currency: 'XOF',
-                channels: 'ALL',
-                description: `Recharge PubCash de ${amount} FCFA`,
-                customer_name: user.nom || "Client",
-                customer_surname: user.prenom || "PubCash",
-                customer_email: user.email,
-                customer_phone_number: user.telephone, // Utilisation du numéro à jour
-                customer_address: user.commune || "Non défini",
-                customer_city: user.commune || "Non défini",
-                customer_country: "CI",
-                customer_state: "CI",
-                customer_zip_code: "0000"
-            }
-        });
-    } catch (error) {
-        console.error('Erreur rechargeAccount:', error);
-        res.status(500).json({ message: "Erreur lors de l'initialisation du paiement" });
-    }
+      // === NOUVELLE CORRECTION : VALIDATION DES NOMS POUR CINETPAY ===
+      // CinetPay exige que customer_surname ait au moins 2 caractères
+      let customerName = (user.nom || "Client").trim();
+      let customerSurname = (user.prenom || "PubCash").trim();
+      
+      // Si le prénom est trop court, on utilise une valeur par défaut plus longue
+      if (customerSurname.length < 2) {
+          console.warn(`Prénom trop court (${customerSurname.length} caractères), utilisation de "Utilisateur"`);
+          customerSurname = "Utilisateur";
+      }
+      
+      // Si le nom est trop court, on utilise une valeur par défaut
+      if (customerName.length < 2) {
+          console.warn(`Nom trop court (${customerName.length} caractères), utilisation de "Client"`);
+          customerName = "Client";
+      }
+
+      console.log("Numéro original:", user.telephone);
+      console.log("Numéro formaté:", formattedPhone);
+      console.log("Nom utilisé:", customerName);
+      console.log("Prénom utilisé:", customerSurname);
+
+      const transactionId = `RECH_${clientId}_${Date.now()}`;
+
+      await ensureCinetpayTable();
+      
+      // Insertion de la transaction
+      await pool.execute(
+          'INSERT INTO cinetpay_transactions (transaction_id, client_id, amount, status) VALUES (?, ?, ?, ?)',
+          [transactionId, clientId, Number(amount), 'PENDING']
+      );
+
+      // Données pour CinetPay - AVEC LES NOMS CORRIGÉS
+      const checkoutData = {
+          transaction_id: transactionId,
+          amount: Number(amount),
+          currency: 'XOF',
+          channels: 'ALL',
+          description: `Recharge PubCash de ${amount} FCFA`,
+          customer_name: customerName,
+          customer_surname: customerSurname,
+          customer_email: user.email || "client@pubcash.com",
+          customer_phone_number: formattedPhone,
+          customer_address: user.commune || "Abidjan",
+          customer_city: user.commune || "Abidjan",
+          customer_country: "CI",
+          customer_state: "CI",
+          customer_zip_code: "0000"
+      };
+
+      console.log("=== Données envoyées à CinetPay ===");
+      console.log("Transaction ID:", transactionId);
+      console.log("Montant:", amount);
+      console.log("Téléphone formaté:", formattedPhone);
+      console.log("Nom:", customerName);
+      console.log("Prénom:", customerSurname);
+      console.log("URL de notification:", `${BASE_URL}/webhook/cinetpay`);
+
+      res.status(200).json({
+          message: 'Paiement initialisé',
+          cinetpay_config: {
+              apikey: CINETPAY_APIKEY,
+              site_id: CINETPAY_SITE_ID,
+              notify_url: `${BASE_URL}/webhook/cinetpay`,
+              mode: 'PRODUCTION'
+          },
+          checkout_data: checkoutData
+      });
+
+  } catch (error) {
+      console.error('❌ Erreur rechargeAccount:', error);
+      res.status(500).json({ 
+          message: "Erreur lors de l'initialisation du paiement",
+          error: error.message 
+      });
+  }
 };
   /**
    * VERIFIER LE PAIEMENT (endpoint POST /client/recharge/verify)

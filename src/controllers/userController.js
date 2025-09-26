@@ -48,49 +48,47 @@ exports.getProfileForUser = async (req, res) => {
  * @access  Privé
  */
 exports.updateProfileForUser = async (req, res) => {
-    const userId = req.user.id;
-    // On récupère les données du corps de la requête
-    const { nom, prenom, nom_utilisateur, contact, newPassword, currentPassword } = req.body;
+  const userId = req.user.id;
+  const { nom, prenom, nom_utilisateur, contact, newPassword, currentPassword } = req.body;
 
-    try {
-        // Validation simple des champs requis
-        if (!nom || !prenom || !nom_utilisateur) {
-            return res.status(400).json({ message: 'Le nom, le prénom et le nom d\'utilisateur sont requis.' });
-        }
+  try {
+      if (!nom || !prenom || !nom_utilisateur) {
+          return res.status(400).json({ message: 'Le nom, le prénom et le nom d\'utilisateur sont requis.' });
+      }
 
-        // 1. Mettre à jour les informations de base (texte)
-        await pool.execute(
-            'UPDATE utilisateurs SET nom = ?, prenom = ?, nom_utilisateur = ?, contact = ? WHERE id = ?',
-            [nom, prenom, nom_utilisateur, contact || null, userId]
-        );
+      // Exiger la confirmation du mot de passe pour toute modification (sécurité)
+      if (!currentPassword) {
+          return res.status(400).json({ message: 'Veuillez confirmer votre mot de passe pour enregistrer les modifications.' });
+      }
 
-        // 2. Gérer la mise à jour du mot de passe (si demandé)
-        if (newPassword && currentPassword) {
-            // On récupère le mot de passe actuel de la base de données
-            const [rows] = await pool.execute('SELECT mot_de_passe FROM utilisateurs WHERE id = ?', [userId]);
-            const user = rows[0];
+      // Vérifier le mot de passe **AVANT** toute mise à jour
+      const [rows] = await pool.execute('SELECT mot_de_passe FROM utilisateurs WHERE id = ?', [userId]);
+      if (!rows || rows.length === 0) {
+          return res.status(404).json({ message: 'Utilisateur non trouvé.' });
+      }
+      const user = rows[0];
 
-            if (!user) {
-                return res.status(404).json({ message: 'Utilisateur non trouvé.' });
-            }
+      const isMatch = await bcrypt.compare(currentPassword, user.mot_de_passe);
+      if (!isMatch) {
+          return res.status(401).json({ message: 'Le mot de passe actuel est incorrect.' });
+      }
 
-            // On compare le mot de passe fourni avec celui en base de données
-            const isMatch = await bcrypt.compare(currentPassword, user.mot_de_passe);
-            if (!isMatch) {
-                return res.status(401).json({ message: 'Le mot de passe actuel est incorrect.' });
-            }
+      // Si ok, effectuer la mise à jour des champs de profil
+      await pool.execute(
+          'UPDATE utilisateurs SET nom = ?, prenom = ?, nom_utilisateur = ?, contact = ? WHERE id = ?',
+          [nom, prenom, nom_utilisateur, contact || null, userId]
+      );
 
-            // Si le mot de passe actuel est correct, on crypte le nouveau
-            const hashedNewPassword = await bcrypt.hash(newPassword, 10);
-            
-            // On met à jour le mot de passe dans la base de données
-            await pool.execute('UPDATE utilisateurs SET mot_de_passe = ? WHERE id = ?', [hashedNewPassword, userId]);
-        }
+      // Si changement de mot de passe demandé -> mettre à jour
+      if (newPassword) {
+          const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+          await pool.execute('UPDATE utilisateurs SET mot_de_passe = ? WHERE id = ?', [hashedNewPassword, userId]);
+      }
 
-        res.status(200).json({ message: 'Profil mis à jour avec succès !' });
+      return res.status(200).json({ message: 'Profil mis à jour avec succès !' });
 
-    } catch (error) {
-        console.error("Erreur [updateProfileForUser]:", error);
-        res.status(500).json({ message: 'Erreur serveur lors de la mise à jour du profil.' });
-    }
-}
+  } catch (error) {
+      console.error("Erreur [updateProfileForUser]:", error);
+      return res.status(500).json({ message: 'Erreur serveur lors de la mise à jour du profil.' });
+  }
+};

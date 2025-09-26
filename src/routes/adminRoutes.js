@@ -4,13 +4,13 @@ const router = express.Router();
 // --- Contrôleurs ---
 const adminController = require('../controllers/adminController');
 const adminLandingController = require('../controllers/adminLandingController');
-
 // --- Middlewares ---
 // CORRECTION : Un seul import propre pour l'authentification et l'autorisation
 const { protect, authorize } = require('../middlewares/authMiddleware');
 // On garde votre middleware spécifique pour les super-admins
 const isSuperAdminMiddleware = require('../middlewares/isSuperAdminMiddleware');
 
+const { upload, toUploadResults } = require('../middlewares/uploadMiddleware');
 
 /* ===== Routes Admin et SuperAdmin ===== */
 
@@ -39,12 +39,18 @@ router.delete('/admins/:id', protect, isSuperAdminMiddleware, adminController.de
 // GET public (pas besoin de middleware)
 router.get('/info-accueil', adminLandingController.getInfoAccueil);
 
-// POST pour créer / mettre à jour (protégé et pour superadmin)
+// POST info accueil (superadmin + upload)
 router.post(
-    '/info-accueil',
-    protect, // CORRECTION : Remplacement de 'authMiddleware'
-    isSuperAdminMiddleware,
-    adminLandingController.createOrUpdateInfoAccueil
+  '/info-accueil',
+  protect,
+  isSuperAdminMiddleware,
+  upload.fields([
+    { name: 'logo', maxCount: 1 },
+    { name: 'image', maxCount: 1 },
+    { name: 'video', maxCount: 1 }
+  ]),
+  toUploadResults,
+  adminLandingController.createOrUpdateInfoAccueil
 );
 
 module.exports = router;
