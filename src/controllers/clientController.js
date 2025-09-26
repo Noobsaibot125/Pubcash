@@ -295,21 +295,25 @@ exports.getGlobalStats = async (req, res) => {
   try {
       const [rows] = await pool.execute(
           `SELECT 
-              SUM(vues) as total_vues, 
-              SUM(likes) as total_likes, 
-              SUM(partages) as total_partages
-           FROM promotions 
-           WHERE id_client = ? AND statut != 'termine'`,  // <-- Ajout de la condition
+              COUNT(CASE WHEN i.type_interaction = 'vue' THEN 1 END) as total_vues,
+              COUNT(CASE WHEN i.type_interaction = 'like' THEN 1 END) as total_likes,
+              COUNT(CASE WHEN i.type_interaction = 'partage' THEN 1 END) as total_partages
+           FROM interactions i
+           INNER JOIN promotions p ON i.id_promotion = p.id
+           WHERE p.id_client = ? AND p.statut != 'termine'`,
           [clientId]
       );
-      const stats = rows[0];
+      
+      const stats = rows[0] || {}; // Assure qu'on a un objet même si la requête ne retourne rien
+
       res.status(200).json({
-          total_vues: stats.total_vues || 0,
-          total_likes: stats.total_likes || 0,
-          total_partages: stats.total_partages || 0,
+          total_vues: Number(stats.total_vues) || 0,
+          total_likes: Number(stats.total_likes) || 0,
+          total_partages: Number(stats.total_partages) || 0,
       });
+
   } catch (error) {
-      console.error("Erreur getGlobalStats:", error);
+      console.error("Erreur getGlobalStats (version corrigée):", error);
       res.status(500).json({ message: 'Erreur serveur' });
   }
 };
@@ -726,4 +730,270 @@ exports.rechargeAccount = async (req, res) => {
     const [rows] = await pool.execute('SELECT solde_recharge FROM clients WHERE id = ?', [clientId]);
     if (!rows || rows.length === 0) return 0;
     return Number(rows[0].solde_recharge || 0);
+};
+  exports.getMonthlyStats = async (req, res) => {
+    const clientId = req.user.id;
+    
+    try {
+      // Statistiques mensuelles des 6 derniers mois
+      const [stats] = await pool.execute(`
+        SELECT 
+          YEAR(date_creation) as annee,
+          MONTH(date_creation) as mois,
+          COUNT(*) as nombre_promotions,
+          SUM(vues) as total_vues,
+          SUM(likes) as total_likes,
+          SUM(partages) as total_partages,
+          SUM(budget_initial) as total_budget_depense,
+          SUM(budget_restant) as total_budget_restant
+        FROM promotions 
+        WHERE id_client = ? 
+          AND date_creation >= DATE_SUB(NOW(), INTERVAL 6 MONTH)
+        GROUP BY YEAR(date_creation), MONTH(date_creation)
+        ORDER BY annee, mois
+      `, [clientId]);
+  
+      res.status(200).json({
+        statsMensuelles: stats,
+        success: true
+      });
+  
+    } catch (error) {
+      console.error("Erreur getMonthlyStats:", error);
+      res.status(500).json({ 
+        message: 'Erreur serveur',
+        success: false 
+      });
+    }
   };
+  
+  // Récupérer les statistiques globales
+  exports.getGlobalStats = async (req, res) => {
+    const clientId = req.user.id;
+    try {
+        const [rows] = await pool.execute(
+            `SELECT 
+                COUNT(CASE WHEN i.type_interaction = 'vue' THEN 1 END) as total_vues,
+                COUNT(CASE WHEN i.type_interaction = 'like' THEN 1 END) as total_likes,
+                COUNT(CASE WHEN i.type_interaction = 'partage' THEN 1 END) as total_partages
+             FROM interactions i
+             INNER JOIN promotions p ON i.id_promotion = p.id
+             WHERE p.id_client = ? AND p.statut != 'termine'`,
+            [clientId]
+        );
+        const stats = rows[0] || {};
+        res.status(200).json({
+            total_vues: Number(stats.total_vues) || 0,
+            total_likes: Number(stats.total_likes) || 0,
+            total_partages: Number(stats.total_partages) || 0,
+        });
+    } catch (error) {
+        console.error("Erreur getGlobalStats (corrigée):", error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+  };
+  exports.getDetailedStats = async (req, res) => {
+    const clientId = req.user.id;
+    
+    try {
+      // Statistiques mensuelles des 12 derniers mois
+      const [monthlyStats] = await pool.execute(`
+        SELECT 
+          YEAR(date_creation) as annee,
+          MONTH(date_creation) as mois,
+          COUNT(*) as nombre_promotions,
+          SUM(vues) as total_vues,
+          SUM(likes) as total_likes,
+          SUM(partages) as total_partages,
+          SUM(budget_initial) as total_budget_depense,
+          SUM(budget_restant) as total_budget_restant,
+          AVG(vues) as vues_moyennes,
+          AVG(likes) as likes_moyens,
+          AVG(partages) as partages_moyens
+        FROM promotions 
+        WHERE id_client = ? 
+          AND date_creation >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+        GROUP BY YEAR(date_creation), MONTH(date_creation)
+        ORDER BY annee, mois
+      `, [clientId]);
+  
+      // Statistiques globales
+      const [globalStats] = await pool.execute(`
+        SELECT 
+          COUNT(*) as total_promotions,
+          SUM(vues) as total_vues,
+          SUM(likes) as total_likes,
+          SUM(partages) as total_partages,
+          SUM(budget_initial) as total_budget_depense,
+          AVG(vues) as performance_moyenne,
+          MAX(vues) as meilleure_performance,
+          MIN(vues) as pire_performance
+        FROM promotions 
+        WHERE id_client = ?
+      `, [clientId]);
+  
+      // Performance par pack
+      const [packStats] = await pool.execute(`
+        SELECT 
+          p.nom_pack,
+          COUNT(pr.id) as nombre_promotions,
+          SUM(pr.vues) as total_vues,
+          AVG(pr.vues) as vues_moyennes,
+          SUM(pr.budget_initial) as budget_total
+        FROM promotions pr
+        JOIN packs p ON pr.id_pack = p.id
+        WHERE pr.id_client = ?
+        GROUP BY p.id, p.nom_pack
+        ORDER BY total_vues DESC
+      `, [clientId]);
+  
+      res.status(200).json({
+        monthlyStats: monthlyStats,
+        globalStats: globalStats[0] || {},
+        packStats: packStats,
+        success: true
+      });
+  
+    } catch (error) {
+      console.error("Erreur getDetailedStats:", error);
+      res.status(500).json({ 
+        message: 'Erreur serveur',
+        success: false 
+      });
+    }
+  };
+
+
+  exports.getDetailedStatsWithInteractions = async (req, res) => {
+    const clientId = req.user.id;
+    try {
+        const [monthlyInteractions] = await pool.execute(`
+            SELECT 
+                YEAR(i.date_interaction) as annee,
+                MONTH(i.date_interaction) as mois,
+                COUNT(CASE WHEN i.type_interaction = 'vue' THEN 1 END) as total_vues,
+                COUNT(CASE WHEN i.type_interaction = 'like' THEN 1 END) as total_likes,
+                COUNT(CASE WHEN i.type_interaction = 'partage' THEN 1 END) as total_partages
+            FROM interactions i
+            INNER JOIN promotions p ON i.id_promotion = p.id
+            WHERE p.id_client = ? 
+                AND i.date_interaction >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+            GROUP BY YEAR(i.date_interaction), MONTH(i.date_interaction)
+            ORDER BY annee, mois
+        `, [clientId]);
+
+        const [globalFinancialStats] = await pool.execute(`
+            SELECT 
+                COUNT(*) as total_promotions,
+                SUM(budget_initial) as total_budget_depense
+            FROM promotions 
+            WHERE id_client = ?
+        `, [clientId]);
+
+        const currentDate = new Date();
+        const monthlyData = [];
+        
+        for (let i = 11; i >= 0; i--) {
+            const targetDate = new Date(currentDate);
+            targetDate.setMonth(targetDate.getMonth() - i);
+            const year = targetDate.getFullYear();
+            const month = targetDate.getMonth() + 1;
+            
+            const existingData = monthlyInteractions.find(stat => 
+                stat.annee === year && stat.mois === month
+            );
+            
+            monthlyData.push({
+                annee: year,
+                mois: month,
+                // --- CORRECTION CRUCIALE ICI ---
+                // Appel direct de la fonction sans 'this.'
+                nom_mois: getFrenchMonthName(month).substring(0, 3),
+                total_vues: Number(existingData?.total_vues) || 0,
+                total_likes: Number(existingData?.total_likes) || 0,
+                total_partages: Number(existingData?.total_partages) || 0,
+            });
+        }
+        
+        const financialData = globalFinancialStats[0] || {};
+
+        res.status(200).json({
+            monthlyStats: monthlyData,
+            globalStats: {
+                total_promotions: Number(financialData.total_promotions) || 0,
+                total_budget_depense: Number(financialData.total_budget_depense) || 0
+            },
+            success: true
+        });
+
+    } catch (error) {
+        console.error("Erreur getDetailedStatsWithInteractions:", error);
+        res.status(500).json({ 
+            message: 'Erreur serveur lors de la récupération des statistiques',
+            success: false 
+        });
+    }
+};
+
+/**
+ * Helper function pour obtenir le nom du mois en français
+ */
+const getFrenchMonthName = (monthNumber) => {
+  const months = [
+      'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+      'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
+  ];
+  return months[monthNumber - 1] || '';
+};
+
+/**
+ * Récupère les statistiques en temps réel (30 derniers jours)
+ */
+exports.getRealTimeStats = async (req, res) => {
+    const clientId = req.user.id;
+    
+    try {
+        // Statistiques des 30 derniers jours
+        const [recentStats] = await pool.execute(`
+            SELECT 
+                DATE(i.date_interaction) as date_interaction,
+                COUNT(CASE WHEN i.type_interaction = 'vue' THEN 1 END) as vues,
+                COUNT(CASE WHEN i.type_interaction = 'like' THEN 1 END) as likes,
+                COUNT(CASE WHEN i.type_interaction = 'partage' THEN 1 END) as partages,
+                COUNT(DISTINCT i.id_utilisateur) as utilisateurs_uniques
+            FROM interactions i
+            INNER JOIN promotions p ON i.id_promotion = p.id
+            WHERE p.id_client = ? 
+                AND i.date_interaction >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+            GROUP BY DATE(i.date_interaction)
+            ORDER BY date_interaction DESC
+            LIMIT 30
+        `, [clientId]);
+
+        // Interactions aujourd'hui
+        const [todayStats] = await pool.execute(`
+            SELECT 
+                COUNT(CASE WHEN i.type_interaction = 'vue' THEN 1 END) as vues_aujourdhui,
+                COUNT(CASE WHEN i.type_interaction = 'like' THEN 1 END) as likes_aujourdhui,
+                COUNT(CASE WHEN i.type_interaction = 'partage' THEN 1 END) as partages_aujourdhui,
+                COUNT(DISTINCT i.id_utilisateur) as utilisateurs_aujourdhui
+            FROM interactions i
+            INNER JOIN promotions p ON i.id_promotion = p.id
+            WHERE p.id_client = ? 
+                AND DATE(i.date_interaction) = CURDATE()
+        `, [clientId]);
+
+        res.status(200).json({
+            recentStats: recentStats,
+            todayStats: todayStats[0] || {},
+            success: true
+        });
+
+    } catch (error) {
+        console.error("Erreur getRealTimeStats:", error);
+        res.status(500).json({ 
+            message: 'Erreur serveur',
+            success: false 
+        });
+    }
+};
