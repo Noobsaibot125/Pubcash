@@ -39,23 +39,28 @@ exports.sendPromotionFinishedEmail = async (client, promotion) => {
     }
 
     try {
-        // --- CORRECTION CLÉ ---
-        // On définit la baseUrl ICI, en se basant sur l'environnement.
-        const baseUrl = process.env.NODE_ENV === 'production' 
-        ? process.env.PRODUCTION_URL 
-        : process.env.DEVELOPMENT_URL;
+        // --- AMÉLIORATION : On vérifie que les URLs sont bien définies ---
+        const devUrl = process.env.DEVELOPMENT_URL || 'http://localhost:3000'; // Fallback pour le développement
+        let baseUrl = process.env.NODE_ENV === 'production' 
+            ? process.env.PRODUCTION_URL 
+            : devUrl;
+
+        // Si l'URL de production n'est pas définie, on log une erreur claire !
+        if (process.env.NODE_ENV === 'production' && !process.env.PRODUCTION_URL) {
+            console.error('ERREUR CRITIQUE : La variable d\'environnement PRODUCTION_URL n\'est pas définie ! Les liens dans les emails seront cassés.');
+            // On peut utiliser une valeur par défaut pour ne pas faire planter l'envoi
+            baseUrl = 'https://pub-cash.com'; 
+        }
     
-    const templateData = {
-        clientName: client.nom || 'Client',
-        promotionTitle: promotion.titre,
-        promotionDescription: promotion.description || 'Aucune description',
-        promotionEndDate: new Date().toLocaleDateString('fr-FR', {
-            year: 'numeric', month: 'long', day: 'numeric'
-        }),
-        historyLink: `${baseUrl}/client/historique`,
-        thumbnailUrl: promotion.thumbnail_url,
-        pubcashLogoUrl: `${baseUrl}/uploads/pubcash-logo.png`
-    };
+        const templateData = {
+            clientName: client.nom || 'Client',
+            promotionTitle: promotion.titre,
+            promotionDescription: promotion.description || 'Aucune description',
+            promotionEndDate: new Date().toLocaleDateString('fr-FR', { year: 'numeric', month: 'long', day: 'numeric' }),
+            historyLink: `${baseUrl}/client/historique`,
+            thumbnailUrl: promotion.thumbnail_url || '', // S'assurer qu'il y a une valeur
+            pubcashLogoUrl: `${baseUrl}/uploads/pubcash-logo.png`
+        };
         
         const htmlContent = createEmailHtml('promotionTerminee', templateData);
 
