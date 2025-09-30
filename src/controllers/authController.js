@@ -58,7 +58,16 @@ const sendOtpEmail = async (email, otp) => {
   
   
   // --- FONCTION REGISTERCLIENT MISE À JOUR ---
-  exports.registerClient = async (req, res) => {
+  const checkEmailExists = async (email) => {
+    const [admins] = await pool.execute('SELECT id FROM administrateurs WHERE email = ?', [email]);
+    const [clients] = await pool.execute('SELECT id FROM clients WHERE email = ?', [email]);
+    const [users] = await pool.execute('SELECT id FROM utilisateurs WHERE email = ?', [email]);
+    
+    return admins.length > 0 || clients.length > 0 || users.length > 0;
+};
+
+// Modifiez registerClient
+exports.registerClient = async (req, res) => {
     const { nom, prenom, nom_utilisateur, email, mot_de_passe, telephone, commune } = req.body;
 
     if (!nom || !prenom || !nom_utilisateur || !email || !mot_de_passe || !telephone || !commune) {
@@ -66,9 +75,15 @@ const sendOtpEmail = async (email, otp) => {
     }
 
     try {
+        // Vérifier si l'email existe déjà dans n'importe quelle table
+        const emailExists = await checkEmailExists(email);
+        if (emailExists) {
+            return res.status(409).json({ message: 'Cet email est déjà utilisé.' });
+        }
+
         const hashedPassword = await bcrypt.hash(mot_de_passe, 10);
         const otp = Math.floor(10000 + Math.random() * 90000).toString(); 
-        const otpExpiration = new Date(Date.now() + 10 * 60 * 1000); 
+        const otpExpiration = new Date(Date.now() + 10 * 60 * 1000);
 
         const [result] = await pool.execute(
             `INSERT INTO clients (nom, prenom, nom_utilisateur, email, telephone, mot_de_passe, commune, otp_code, otp_expiration) 
@@ -77,7 +92,6 @@ const sendOtpEmail = async (email, otp) => {
         );
 
         await sendOtpEmail(email, otp);
-
         res.status(201).json({ message: 'Promoteur inscrit. Veuillez vérifier votre email pour le code OTP.', email });
     } catch (error) {
         if (error.code === 'ER_DUP_ENTRY') {
@@ -179,45 +193,105 @@ const sendOtpEmail = async (email, otp) => {
         res.status(500).json({ message: 'Erreur serveur' });
     }
 };
+exports.registerUtilisateur = async (req, res) => {
+  console.log('📨 Données reçues registerUtilisateur:', req.body);
 
-  exports.registerUtilisateur = async (req, res) => {
-    // Ajout des nouveaux champs dans la destructuration
-    const { nom_utilisateur, email, mot_de_passe, commune_choisie, date_naissance, contact } = req.body;
+  const {
+    nom_utilisateur,
+    email,
+    mot_de_passe,
+    ville,
+    commune,
+    date_naissance,
+    contact
+  } = req.body;
 
-    // Validation des champs obligatoires
-    if (!nom_utilisateur || !email || !mot_de_passe || !commune_choisie || !date_naissance) {
-        return res.status(400).json({ message: 'Nom, email, mot de passe, commune et date de naissance sont obligatoires.' });
+  // VALIDATION STRICTE selon le message d'erreur
+  if (!nom_utilisateur || !email || !mot_de_passe || !commune || !date_naissance) {
+    console.log('❌ Champs manquants:', {
+      nom_utilisateur: !nom_utilisateur,
+      email: !email,
+      mot_de_passe: !mot_de_passe,
+      commune: !commune,
+      date_naissance: !date_naissance
+    });
+    return res.status(400).json({
+      message: 'Nom, email, mot de passe, commune et date de naissance sont obligatoires.'
+    });
+  }
+
+  try {
+    // Vérifier si l'email existe déjà
+    const emailExists = await checkEmailExists(email);
+    if (emailExists) {
+      return res.status(409).json({ message: 'Cet email est déjà utilisé.' });
     }
 
-    try {
-        const hashedPassword = await bcrypt.hash(mot_de_passe, 10);
-        
-        // Modification de la requête SQL pour inclure les nouveaux champs
-        await pool.execute(
-            'INSERT INTO utilisateurs (nom_utilisateur, email, mot_de_passe, commune_choisie, est_actif, date_naissance, contact) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [
-                nom_utilisateur,
-                email,
-                hashedPassword,
-                commune_choisie,
-                true,
-                date_naissance,  // Format attendu : YYYY-MM-DD
-                contact || null  // NULL si non fourni
-            ]
-        );
-        
-        res.status(201).json({ message: 'Utilisateur inscrit avec succès !' });
-    } catch (error) {
-        if (error.code === 'ER_DUP_ENTRY') {
-            return res.status(409).json({ message: 'Ce nom d\'utilisateur ou cet email est déjà utilisé.' });
-        }
-        console.error("Erreur registerUtilisateur:", error);
-        res.status(500).json({ message: 'Erreur serveur' });
+    const hashedPassword = await bcrypt.hash(mot_de_passe, 10);
+    
+    // FORMATAGE DE LA DATE
+    let formattedDate = date_naissance;
+    if (date_naissance.includes('/')) {
+      const parts = date_naissance.split('/');
+      formattedDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
     }
+
+    console.log('✅ Données prêtes pour insertion:', {
+      nom_utilisateur,
+      email,
+      ville: ville || '',
+      commune,
+      date_naissance: formattedDate,
+      contact: contact || null
+    });
+
+    // INSERTION avec tous les champs nécessaires
+    const [result] = await pool.execute(
+      `INSERT INTO utilisateurs 
+       (nom_utilisateur, email, mot_de_passe, ville, commune_choisie, est_actif,
+        date_naissance, contact, date_inscription, created_at, updated_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())`,
+      [
+        nom_utilisateur,
+        email,
+        hashedPassword,
+        ville || '',
+        commune,
+        true,
+        formattedDate,
+        contact || null
+      ]
+    );
+
+    console.log('✅ Utilisateur créé avec ID:', result.insertId);
+    res.status(201).json({ 
+      message: 'Utilisateur inscrit avec succès !',
+      userId: result.insertId 
+    });
+
+  } catch (error) {
+    console.error('❌ Erreur registerUtilisateur:', error);
+    
+    if (error.code === 'ER_DUP_ENTRY') {
+      if (error.sqlMessage.includes('email')) {
+        return res.status(409).json({ message: 'Cet email est déjà utilisé.' });
+      }
+      if (error.sqlMessage.includes('nom_utilisateur')) {
+        return res.status(409).json({ message: 'Ce nom d\'utilisateur est déjà utilisé.' });
+      }
+      return res.status(409).json({ message: 'Nom d\'utilisateur ou email déjà utilisé.' });
+    }
+    
+    if (error.code === 'ER_TRUNCATED_WRONG_VALUE') {
+      return res.status(400).json({ message: 'Format de date invalide.' });
+    }
+    
+    res.status(500).json({ 
+      message: 'Erreur serveur lors de la création du compte',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
 };
-
-
-
 
 // POST /auth/facebook
 exports.facebookAuth = async (req, res) => {

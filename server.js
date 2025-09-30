@@ -14,7 +14,7 @@ const { Server } = require("socket.io");
 const mainRouter = require('./src/routes');
 const clientController = require('./src/controllers/clientController');
 const pool = require('./src/config/db');
-
+const publicRoutes = require('./src/routes/publicRoutes');
 // --- Initialisation d'Express et du serveur HTTP ---
 const app = express();
 const server = http.createServer(app);
@@ -96,7 +96,7 @@ app.post('/webhook/cinetpay', clientController.cinetpayNotify);
 
 // --- ROUTES PRINCIPALES DE L'API ---
 app.use('/api', mainRouter);
-
+app.use('/api', publicRoutes);
 // ======================================================
 // --- GESTION DES CONNEXIONS WEBSOCKET ---
 // ======================================================

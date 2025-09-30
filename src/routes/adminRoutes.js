@@ -33,8 +33,11 @@ router.get('/online-users', protect, authorize('admin', 'superadmin'), adminCont
 router.get('/admins', protect, isSuperAdminMiddleware, adminController.getAllAdmins);
 router.post('/admins', protect, isSuperAdminMiddleware, adminController.createAdmin);
 router.delete('/admins/:id', protect, isSuperAdminMiddleware, adminController.deleteAdmin);
-
-
+// --- Routes pour la gestion des Communes et Villes (SuperAdmin) ---
+router.post('/villes', protect, isSuperAdminMiddleware, adminController.createVille);
+router.get('/villes', protect, isSuperAdminMiddleware, adminController.getAllVilles);
+router.post('/communes', protect, isSuperAdminMiddleware, adminController.createCommune);
+router.get('/communes', protect, isSuperAdminMiddleware, adminController.getAllCommunes); // Pour lister les communes créées
 /* ===== ROUTES INFO ACCUEIL (landing) ===== */
 // GET public (pas besoin de middleware)
 router.get('/info-accueil', adminLandingController.getInfoAccueil);

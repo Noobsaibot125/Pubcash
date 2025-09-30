@@ -311,3 +311,88 @@ exports.getOnlineUsers = async (req, res) => {
     res.status(500).json({ message: 'Erreur serveur' });
   }
 };
+// --- Créer une nouvelle VILLE ---
+exports.createVille = async (req, res) => {
+  const { nom } = req.body;
+  if (!nom) {
+      return res.status(400).json({ message: 'Le nom de la ville est requis.' });
+  }
+  try {
+      const [existing] = await pool.execute('SELECT id FROM villes WHERE nom = ?', [nom]);
+      if (existing.length > 0) {
+          return res.status(409).json({ message: 'Cette ville existe déjà.' });
+      }
+      const [result] = await pool.execute('INSERT INTO villes (nom) VALUES (?)', [nom]);
+      res.status(201).json({ 
+          id: result.insertId, 
+          nom, 
+          message: 'Ville créée avec succès !' 
+      });
+  } catch (error) {
+      console.error("Erreur createVille:", error);
+      res.status(500).json({ message: 'Erreur serveur lors de la création de la ville.' });
+  }
+};
+
+// --- Récupérer toutes les VILLES ---
+exports.getAllVilles = async (req, res) => {
+  try {
+    const [villes] = await pool.execute('SELECT id, nom FROM villes ORDER BY nom ASC');
+    res.status(200).json(villes);
+  } catch (error) {
+    console.error("Erreur getAllVilles:", error);
+    res.status(500).json({ message: 'Erreur serveur lors de la récupération des villes.' });
+  }
+};
+
+// --- Créer une nouvelle COMMUNE ---
+exports.createCommune = async (req, res) => {
+  const { nom, id_ville } = req.body;
+  if (!nom || !id_ville) {
+      return res.status(400).json({ message: 'Le nom de la commune et la ville associée sont requis.' });
+  }
+  try {
+      const [villeExists] = await pool.execute('SELECT id FROM villes WHERE id = ?', [id_ville]);
+      if (villeExists.length === 0) {
+          return res.status(404).json({ message: 'La ville sélectionnée n\'existe pas.' });
+      }
+      const [result] = await pool.execute('INSERT INTO communes (nom, id_ville) VALUES (?, ?)', [nom, id_ville]);
+      res.status(201).json({ 
+          id: result.insertId, 
+          nom, 
+          id_ville, 
+          message: 'Commune créée avec succès !' 
+      });
+  } catch (error) {
+      console.error("Erreur createCommune:", error);
+      res.status(500).json({ message: 'Erreur serveur lors de la création de la commune.' });
+  }
+};
+
+// --- Récupérer toutes les COMMUNES (avec le nom de leur ville) ---
+exports.getAllCommunes = async (req, res) => {
+  try {
+    const query = `
+      SELECT c.id, c.nom, c.id_ville, v.nom AS nom_ville
+      FROM communes c
+      JOIN villes v ON c.id_ville = v.id
+      ORDER BY v.nom, c.nom ASC
+    `;
+    const [communes] = await pool.execute(query);
+    res.status(200).json(communes);
+  } catch (error) {
+    console.error("Erreur getAllCommunes:", error);
+    res.status(500).json({ message: 'Erreur serveur lors de la récupération des communes.' });
+  }
+};
+exports.getCommunesByVille = async (req, res) => {
+  const villeId = req.params.id;
+  try {
+    const query = 'SELECT id, nom, id_ville FROM communes WHERE id_ville = ? ORDER BY nom ASC';
+    const [rows] = await pool.execute(query, [villeId]);
+    res.status(200).json(rows);
+  } catch (err) {
+    console.error('Erreur getCommunesByVille:', err);
+    res.status(500).json({ message: 'Erreur serveur lors de la récupération des communes.' });
+  }
+};
