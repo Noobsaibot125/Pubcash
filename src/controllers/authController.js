@@ -576,113 +576,113 @@ exports.facebookAuth = async (req, res) => {
     }
   };
   // POST /auth/google
-exports.googleAuth = async (req, res) => {
-  const { accessToken } = req.body;
-
-  if (!accessToken) {
-    return res.status(400).json({ message: 'Access token Google requis.' });
-  }
-
-  try {
-    console.log('Tentative de connexion Google avec token:', accessToken.substring(0, 10) + '...');
-
-    // 1. Vérifier le token et récupérer les infos utilisateur depuis Google
-    const googleRes = await axios.get('https://www.googleapis.com/oauth2/v3/userinfo', {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    });
-
-    const profile = googleRes.data;
-    console.log('Profil Google complet reçu:', JSON.stringify(profile, null, 2));
-
-    const id_google = profile.sub; // 'sub' est l'ID Google unique
-    const email = profile.email;
-    const nom = profile.family_name || '';
-    const prenom = profile.given_name || '';
-    const photo_profil = profile.picture || null;
-    const nom_utilisateur = profile.name || [prenom, nom].filter(Boolean).join(' ') || `google_user_${id_google}`;
-
-    if (!email) {
-      return res.status(400).json({ message: "Impossible de récupérer l'email depuis Google." });
+  exports.googleAuth = async (req, res) => {
+    const { accessToken } = req.body;
+  
+    if (!accessToken) {
+      return res.status(400).json({ message: 'Access token Google requis.' });
     }
-
-    // 2. Vérifier si l'utilisateur existe
-    const [rows] = await pool.execute(
-      'SELECT * FROM utilisateurs WHERE id_google = ? OR email = ?',
-      [id_google, email]
-    );
-    let user = rows[0];
-
-    // 3. Créer ou Mettre à jour l'utilisateur
-    if (!user) {
-      console.log('Création d\'un nouvel utilisateur Google');
-      const now = new Date();
-      
-      const [inserted] = await pool.execute(
-        `INSERT INTO utilisateurs 
-        (nom_utilisateur, email, mot_de_passe, commune_choisie, est_actif, id_google, date_inscription, photo_profil, nom, prenom) 
-        VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)`,
-        [nom_utilisateur, email, true, id_google, now, photo_profil, nom, prenom]
-      );
-
-      const insertedId = inserted.insertId;
-      [rows] = await pool.execute('SELECT *, "utilisateur" as role FROM utilisateurs WHERE id = ?', [insertedId]);
-      user = rows[0];
-
-    } else {
-      console.log('Utilisateur Google existant trouvé:', user.id);
-      // Mettre à jour les infos
-      const updates = [];
-      const updateParams = [];
-      
-      if (photo_profil && photo_profil !== user.photo_profil) updates.push('photo_profil = ?'), updateParams.push(photo_profil);
-      if (nom && nom !== user.nom) updates.push('nom = ?'), updateParams.push(nom);
-      if (prenom && prenom !== user.prenom) updates.push('prenom = ?'), updateParams.push(prenom);
-      if (nom_utilisateur && nom_utilisateur !== user.nom_utilisateur) updates.push('nom_utilisateur = ?'), updateParams.push(nom_utilisateur);
-      if (!user.id_google) updates.push('id_google = ?'), updateParams.push(id_google);
-
-      if (updates.length > 0) {
-        updateParams.push(user.id);
-        await pool.execute(`UPDATE utilisateurs SET ${updates.join(', ')} WHERE id = ?`, updateParams);
-        
-        [rows] = await pool.execute('SELECT *, "utilisateur" as role FROM utilisateurs WHERE id = ?', [user.id]);
-        user = rows[0];
+  
+    try {
+      console.log('Tentative de connexion Google avec token:', accessToken.substring(0, 10) + '...');
+  
+      // 1. Vérifier le token et récupérer les infos utilisateur depuis Google
+      const googleRes = await axios.get('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+  
+      const profile = googleRes.data;
+      console.log('Profil Google complet reçu:', JSON.stringify(profile, null, 2));
+  
+      const id_google = profile.sub; // 'sub' est l'ID Google unique
+      const email = profile.email;
+      const nom = profile.family_name || '';
+      const prenom = profile.given_name || '';
+      const photo_profil = profile.picture || null;
+      const nom_utilisateur = profile.name || [prenom, nom].filter(Boolean).join(' ') || `google_user_${id_google}`;
+  
+      if (!email) {
+        return res.status(400).json({ message: "Impossible de récupérer l'email depuis Google." });
       }
+  
+      // 2. Vérifier si l'utilisateur existe
+      //    ⬇️⬇️⬇️ CORRECTION ICI ⬇️⬇️⬇️
+      let [rows] = await pool.execute(
+        'SELECT * FROM utilisateurs WHERE id_google = ? OR email = ?',
+        [id_google, email]
+      );
+      let user = rows[0];
+  
+      // 3. Créer ou Mettre à jour l'utilisateur
+      if (!user) {
+        console.log('Création d\'un nouvel utilisateur Google');
+        const now = new Date();
+        
+        const [inserted] = await pool.execute(
+          `INSERT INTO utilisateurs 
+          (nom_utilisateur, email, mot_de_passe, commune_choisie, est_actif, id_google, date_inscription, photo_profil, nom, prenom) 
+          VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)`,
+          [nom_utilisateur, email, true, id_google, now, photo_profil, nom, prenom]
+        );
+  
+        const insertedId = inserted.insertId;
+        // Cette ligne n'est plus une erreur car 'rows' est 'let'
+        [rows] = await pool.execute('SELECT *, "utilisateur" as role FROM utilisateurs WHERE id = ?', [insertedId]);
+        user = rows[0];
+  
+      } else {
+        console.log('Utilisateur Google existant trouvé:', user.id);
+        // Mettre à jour les infos
+        const updates = [];
+        const updateParams = [];
+        
+        if (photo_profil && photo_profil !== user.photo_profil) updates.push('photo_profil = ?'), updateParams.push(photo_profil);
+        if (nom && nom !== user.nom) updates.push('nom = ?'), updateParams.push(nom);
+        if (prenom && prenom !== user.prenom) updates.push('prenom = ?'), updateParams.push(prenom);
+        if (nom_utilisateur && nom_utilisateur !== user.nom_utilisateur) updates.push('nom_utilisateur = ?'), updateParams.push(nom_utilisateur);
+        if (!user.id_google) updates.push('id_google = ?'), updateParams.push(id_google);
+  
+        if (updates.length > 0) {
+          updateParams.push(user.id);
+          await pool.execute(`UPDATE utilisateurs SET ${updates.join(', ')} WHERE id = ?`, updateParams);
+          
+          [rows] = await pool.execute('SELECT *, "utilisateur" as role FROM utilisateurs WHERE id = ?', [user.id]);
+          user = rows[0];
+        }
+      }
+  
+      // 4. Générer les tokens (en utilisant votre fonction utilitaire)
+      // ... (le reste de ta fonction est correct) ...
+      const payload = { id: user.id, email: user.email, role: 'utilisateur' };
+      const newAccessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRATION || '15m' });
+      const newRefreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.REFRESH_TOKEN_EXPIRATION || '7d' });
+      
+      await pool.execute(`UPDATE utilisateurs SET refresh_token = ? WHERE id = ?`, [newRefreshToken, user.id]);
+  
+      console.log('Authentification Google réussie pour l\'utilisateur:', user.id);
+  
+      res.status(200).json({
+        accessToken: newAccessToken,
+        refreshToken: newRefreshToken,
+        user: {
+          id: user.id,
+          nom_utilisateur: user.nom_utilisateur,
+          email: user.email,
+          photo_profil: user.photo_profil,
+          role: 'utilisateur'
+        },
+        profileCompleted: Boolean(user.commune_choisie && user.date_naissance && user.contact)
+      });
+  
+    } catch (error) {
+      console.error("--- ERREUR DANS googleAuth ---", error);
+      if (error.response) console.error('Erreur API Google:', error.response.data);
+      else console.error('Erreur:', error.message);
+      res.status(500).json({ message: 'Erreur serveur lors de l\'authentification Google.', error: error.message });
     }
-
-    // 4. Générer les tokens (en utilisant votre fonction utilitaire)
-    // Note : J'appelle generateAndStoreTokens, mais je dois renvoyer la réponse ici
-    // pour inclure 'profileCompleted'
-    const payload = { id: user.id, email: user.email, role: 'utilisateur' };
-    const newAccessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRATION || '15m' });
-    const newRefreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.REFRESH_TOKEN_EXPIRATION || '7d' });
-    
-    await pool.execute(`UPDATE utilisateurs SET refresh_token = ? WHERE id = ?`, [newRefreshToken, user.id]);
-
-    console.log('Authentification Google réussie pour l\'utilisateur:', user.id);
-
-    res.status(200).json({
-      accessToken: newAccessToken,
-      refreshToken: newRefreshToken,
-      user: {
-        id: user.id,
-        nom_utilisateur: user.nom_utilisateur,
-        email: user.email,
-        photo_profil: user.photo_profil,
-        role: 'utilisateur'
-      },
-      // Vérifie si le profil est complet (l'utilisateur devra le remplir si ce n'est pas le cas)
-      profileCompleted: Boolean(user.commune_choisie && user.date_naissance && user.contact)
-    });
-
-  } catch (error) {
-    console.error("--- ERREUR DANS googleAuth ---", error);
-    if (error.response) console.error('Erreur API Google:', error.response.data);
-    else console.error('Erreur:', error.message);
-    res.status(500).json({ message: 'Erreur serveur lors de l\'authentification Google.', error: error.message });
-  }
-};
+  };
   exports.refreshToken = async (req, res) => {
     const { token } = req.body;
     if (!token) {
