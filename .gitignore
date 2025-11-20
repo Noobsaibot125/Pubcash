@@ -1,2 +1,4 @@
 # Fichiers secrets et de configuration locale
 .env
+check_balance.js
+createAdmin.js

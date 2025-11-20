@@ -2,6 +2,9 @@
 const axios = require('axios'); 
 const pool = require('../config/db');
 const { sendPromotionFinishedEmail } = require('../services/emailService');
+const { v4: uuidv4 } = require('uuid');
+const FormData = require('form-data');
+const { URLSearchParams } = require('url');
 exports.getPromotionsForUser = async (req, res) => {
   const userId = req.user.id;
   const userCommune = req.user.commune_choisie || null;
@@ -409,76 +412,321 @@ exports.getUserEarnings = async (req, res) => {
 
 
 // --- FONCTION DE RETRAIT ENTIÈREMENT REVUE ---
+// exports.withdrawEarnings = async (req, res) => {
+//   const userId = req.user.id;
+//   // 1. Récupérer le montant depuis le corps de la requête
+//   const { operator, phoneNumber, amount } = req.body; 
+
+//   // 2. Valider le montant
+//   if (!amount || isNaN(amount) || Number(amount) <= 0) {
+//     return res.status(400).json({ message: 'Un montant valide est requis.' });
+//   }
+//   const withdrawalAmount = Number(amount);
+
+//   if (!operator || !phoneNumber) {
+//     return res.status(400).json({ message: 'L\'opérateur et le numéro de téléphone sont requis.' });
+//   }
+
+//   const connection = await pool.getConnection();
+
+//   try {
+//     await connection.beginTransaction();
+
+//     const [userRows] = await connection.execute(
+//       'SELECT remuneration_utilisateur, contact FROM utilisateurs WHERE id = ? FOR UPDATE',
+//       [userId]
+//     );
+    
+//     if (userRows.length === 0) {
+//       await connection.rollback();
+//       return res.status(404).json({ message: 'Utilisateur non trouvé.' });
+//     }
+
+//     const solde = Number(userRows[0].remuneration_utilisateur || 0);
+
+//     // 3. Vérifier que le montant demandé ne dépasse pas le solde
+//     if (withdrawalAmount > solde) {
+//       await connection.rollback();
+//       return res.status(400).json({ message: 'Le montant demandé dépasse votre solde disponible.' });
+//     }
+
+//     // 4. Insérer la demande avec le montant spécifié
+//     await connection.execute(
+//       'INSERT INTO demandes_retrait (id_utilisateur, montant, operateur_mobile, statut) VALUES (?, ?, ?, ?)',
+//       [userId, withdrawalAmount, operator, 'en_attente']
+//     );
+
+//     // 5. Déduire le montant retiré du solde de l'utilisateur
+//     await connection.execute(
+//       'UPDATE utilisateurs SET remuneration_utilisateur = remuneration_utilisateur - ? WHERE id = ?',
+//       [withdrawalAmount, userId]
+//     );
+
+//     if (phoneNumber !== userRows[0].contact) {
+//       await connection.execute(
+//         'UPDATE utilisateurs SET contact = ? WHERE id = ?',
+//         [phoneNumber, userId]
+//       );
+//     }
+
+//     await connection.commit();
+    
+//     res.status(200).json({ 
+//       message: 'Demande de retrait enregistrée !', 
+//       montant: withdrawalAmount 
+//     });
+
+//   } catch (error) {
+//     await connection.rollback();
+//     console.error("Erreur withdrawEarnings:", error);
+//     res.status(500).json({ message: 'Erreur serveur' });
+//   } finally {
+//     connection.release();
+//   }
+// };
+// --- FONCTION DE RETRAIT AUTOMATISÉ VIA CINETPAY ---
+async function getCinetPayToken() {
+  const formData = new FormData();
+  // On trim() pour éviter les espaces invisibles qui causent des erreurs
+  formData.append('apikey', String(process.env.CINETPAY_APIKEY).trim());
+  formData.append('password', String(process.env.CINETPAY_SECRET_KEY).trim()); 
+
+  try {
+      const response = await axios.post('https://client.cinetpay.com/v1/auth/login', formData, {
+          headers: formData.getHeaders()
+      });
+      if (String(response.data.code) === '0') {
+          return response.data.data?.token || response.data.token;
+      } else {
+          throw new Error(`Auth CinetPay échouée: ${response.data.message}`);
+      }
+  } catch (error) {
+      console.error("Erreur Auth CinetPay:", error.message);
+      throw error;
+  }
+}
 exports.withdrawEarnings = async (req, res) => {
   const userId = req.user.id;
-  // 1. Récupérer le montant depuis le corps de la requête
+  // Simule l'entrée utilisateur standard
   const { operator, phoneNumber, amount } = req.body; 
 
-  // 2. Valider le montant
-  if (!amount || isNaN(amount) || Number(amount) <= 0) {
-    return res.status(400).json({ message: 'Un montant valide est requis.' });
+  // --- 1. VALIDATIONS CÔTÉ SERVEUR (Pour l'utilisateur) ---
+  const withdrawalAmount = parseInt(amount, 10);
+
+  if (!amount || isNaN(amount) || withdrawalAmount <= 0) {
+    return res.status(400).json({ message: 'Veuillez entrer un montant valide.' });
   }
-  const withdrawalAmount = Number(amount);
+
+  // Cas 1 : Montant en dessous du minimum réel (200 XOF)
+  if (withdrawalAmount < 200) {
+    return res.status(400).json({ 
+      message: `Le montant minimum de retrait est de 200 XOF. Veuillez augmenter votre demande.`,
+      details: `Le montant minimum pour cette transaction (incluant les frais) est de 200 XOF.` 
+    });
+  }
 
   if (!operator || !phoneNumber) {
     return res.status(400).json({ message: 'L\'opérateur et le numéro de téléphone sont requis.' });
   }
 
+  // 2. NETTOYAGE NUMÉRO (CI : 10 Chiffres)
+  let cleanPhone = phoneNumber.replace(/\D/g, '');
+  
+  // Retire le 225 ou 00225 si présent, pour ne garder que le numéro local
+  if (cleanPhone.startsWith('225') && cleanPhone.length > 10) cleanPhone = cleanPhone.slice(3);
+  if (cleanPhone.startsWith('00225')) cleanPhone = cleanPhone.slice(5);
+
+  // Cas 4 (Validation Numéro) : Mauvais numéro (format)
+  if (!/^\d{10}$/.test(cleanPhone)) {
+    return res.status(400).json({ message: 'Le numéro de téléphone est invalide. Format attendu : 10 chiffres (ex: 0708325027).' });
+  }
+
+  const transactionId = Date.now().toString() + Math.floor(Math.random() * 1000);
   const connection = await pool.getConnection();
 
   try {
     await connection.beginTransaction();
 
+    // 3. VERIFICATIONS BDD & DÉBIT
     const [userRows] = await connection.execute(
-      'SELECT remuneration_utilisateur, contact FROM utilisateurs WHERE id = ? FOR UPDATE',
+      'SELECT remuneration_utilisateur, nom, prenom, email FROM utilisateurs WHERE id = ? FOR UPDATE',
       [userId]
     );
-    
+
     if (userRows.length === 0) {
       await connection.rollback();
-      return res.status(404).json({ message: 'Utilisateur non trouvé.' });
+      return res.status(404).json({ message: 'Utilisateur introuvable.' });
     }
 
-    const solde = Number(userRows[0].remuneration_utilisateur || 0);
+    const user = userRows[0];
+    const solde = Number(user.remuneration_utilisateur || 0);
 
-    // 3. Vérifier que le montant demandé ne dépasse pas le solde
     if (withdrawalAmount > solde) {
       await connection.rollback();
-      return res.status(400).json({ message: 'Le montant demandé dépasse votre solde disponible.' });
+      return res.status(400).json({ message: 'Le montant demandé dépasse votre solde PubCash disponible.' });
     }
 
-    // 4. Insérer la demande avec le montant spécifié
-    await connection.execute(
-      'INSERT INTO demandes_retrait (id_utilisateur, montant, operateur_mobile, statut) VALUES (?, ?, ?, ?)',
-      [userId, withdrawalAmount, operator, 'en_attente']
-    );
-
-    // 5. Déduire le montant retiré du solde de l'utilisateur
+    // Débit BDD
     await connection.execute(
       'UPDATE utilisateurs SET remuneration_utilisateur = remuneration_utilisateur - ? WHERE id = ?',
       [withdrawalAmount, userId]
     );
 
-    if (phoneNumber !== userRows[0].contact) {
-      await connection.execute(
-        'UPDATE utilisateurs SET contact = ? WHERE id = ?',
-        [phoneNumber, userId]
-      );
-    }
+    // Historique BDD
+    await connection.execute(
+      'INSERT INTO demandes_retrait (id_utilisateur, montant, operateur_mobile, statut, date_demande, transaction_id) VALUES (?, ?, ?, ?, NOW(), ?)',
+      [userId, withdrawalAmount, operator, 'en_cours', transactionId]
+    );
 
     await connection.commit();
-    
-    res.status(200).json({ 
-      message: 'Demande de retrait enregistrée !', 
-      montant: withdrawalAmount 
-    });
+
+    // 4. APPEL CINETPAY (MODE CÔTE D'IVOIRE 🇨🇮)
+    try {
+      console.log("🔐 Authentification CinetPay...");
+      // NOTE: getCinetPayToken doit être défini ailleurs dans ce fichier.
+      const token = await getCinetPayToken(); 
+
+      // Vérification du solde (pour le débug)
+      try {
+          const checkBal = await axios.get(`https://client.cinetpay.com/v1/transfer/check/balance?token=${token}&lang=fr`);
+          if(checkBal.data.code === 0 && checkBal.data.data.countryBalance.CI) {
+             console.log(`💰 Solde dispo CI: ${checkBal.data.data.countryBalance.CI.available} XOF`);
+          }
+      } catch(e) { console.log("⚠️ Skip balance check"); }
+
+      // Infos utilisateur
+      const emailContact = user.email || 'client@pubcash.com';
+      const nomContact = user.nom || 'Client';
+      const prenomContact = user.prenom || 'PubCash';
+
+      // ** DÉFINITION DU PAYMENT METHOD POUR WAVE **
+      const paymentMethod = operator === 'wave' ? 'WAVECI' : null;
+      
+      // ** CALCUL DE L'URL DE NOTIFICATION CORRECTE **
+      let notifyUrl = `${process.env.PRODUCTION_URL}/api/callbacks/cinetpay/withdrawal`;
+      if (!process.env.PRODUCTION_URL || notifyUrl.includes('localhost') || notifyUrl.includes('votredomaine.com')) {
+          // Utilise l'URL de production si la variable est incorrecte ou manquante
+          notifyUrl = 'https://pub-cash.com/api/callbacks/cinetpay/withdrawal'; 
+      }
+      console.log(`ℹ️ URL de notification utilisée: ${notifyUrl}`);
+
+      // A. AJOUT DU CONTACT (Prefix 225)
+      console.log(`➕ Ajout contact CI ${cleanPhone}...`);
+      const paramsContact = new URLSearchParams();
+      paramsContact.append('data', JSON.stringify([{
+          prefix: '225', 
+          phone: cleanPhone,
+          name: prenomContact,
+          surname: nomContact,
+          email: emailContact
+      }]));
+
+      await axios.post(`https://client.cinetpay.com/v1/transfer/contact?token=${token}&lang=fr`, paramsContact, {
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      }).catch(() => {});
+
+      // B. TRANSFERT
+      const transferObject = {
+          amount: String(withdrawalAmount),
+          phone: cleanPhone,
+          prefix: '225', // FORCE CI
+          notify_url: notifyUrl,
+          client_transaction_id: transactionId,
+          email: emailContact,
+          name: nomContact,
+          surname: prenomContact,
+          // AJOUT CONDITIONNEL : WAVECI
+          ...(paymentMethod && { payment_method: paymentMethod }) 
+      };
+
+      const paramsTransfer = new URLSearchParams();
+      paramsTransfer.append('data', JSON.stringify([transferObject]));
+
+      console.log(`📤 Envoi vers +225 ${cleanPhone} (Ref: ${transactionId})...`);
+
+      const configTransfer = {
+        method: 'post',
+        url: `https://client.cinetpay.com/v1/transfer/money/send/contact?token=${token}&lang=fr&transaction_id=${transactionId}`,
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        data: paramsTransfer
+      };
+
+      const apiResponse = await axios(configTransfer);
+      const result = apiResponse.data;
+      
+      console.log("✅ Réponse CinetPay:", JSON.stringify(result, null, 2));
+
+      if (String(result.code) === '0') {
+        await pool.execute(
+          'UPDATE demandes_retrait SET statut = ?, date_traitement = NOW() WHERE transaction_id = ?',
+          ['traite', transactionId]
+        );
+        return res.status(200).json({ message: 'Retrait effectué avec succès !' });
+      } else {
+        // Si le code n'est pas 0 (succès), on jette une erreur pour passer au bloc catch.
+        throw { response: { data: result } }; 
+      }
+
+    } catch (apiError) {
+      console.error("❌ ERREUR CINETPAY:", apiError.response?.data || apiError.message);
+      const responseData = apiError.response?.data || {};
+      // Tente de récupérer le code d'erreur spécifique de CinetPay
+      const errorCode = responseData.data?.[0]?.code || responseData.code || null;
+      
+      // --- GESTION DES ERREURS PROFESSIONNELLES ---
+      let professionalMessage = 'Erreur inattendue. Veuillez réessayer ou contacter l\'administrateur.';
+      
+      switch (errorCode) {
+        
+        // Cas 2 & 3 : Fonds administrateur insuffisants (Ton compte)
+        case 722: 
+        case 'ERROR_PM_AMOUNT': 
+          professionalMessage = 'Erreur inattendue: Le service de retrait est momentanément indisponible. Veuillez contacter l\'administrateur.';
+          break;
+        
+        // Cas 4 : Mauvais numéro ou compte bloqué/inactif
+        case 725: // ERROR_INVALID_ACCOUNT (Compte destinataire invalide)
+        case 726: // ERROR_PHONE_NOT_ALLOWED (Numéro non autorisé/bloqué)
+          professionalMessage = `Le numéro de téléphone ${cleanPhone} est soit incorrect, soit inactif chez l'opérateur. Veuillez vérifier votre numéro.`;
+          break;
+        
+        // Cas 5 : Opérateur indisponible ou problème réseau
+        case 727: // ERROR_PM_UNAVAILABLE (Méthode de paiement (opérateur) indisponible)
+        case 728: // ERROR_PM_TECHNICAL (Problème technique de l'opérateur)
+          professionalMessage = `L'opérateur ${operator.toUpperCase()} rencontre un problème technique. Veuillez réessayer plus tard ou choisir un autre opérateur.`;
+          break;
+        
+        // Défaut
+        default:
+          professionalMessage = 'Erreur inattendue. Le transfert a échoué. Veuillez contacter l\'administrateur.';
+          break;
+      }
+      
+      // --- LOGIQUE DE REMBOURSEMENT & MISE À JOUR STATUT ---
+      await pool.execute(
+        'UPDATE utilisateurs SET remuneration_utilisateur = remuneration_utilisateur + ? WHERE id = ?',
+        [withdrawalAmount, userId]
+      );
+      
+      try {
+        await pool.execute(
+            'UPDATE demandes_retrait SET statut = ?, date_traitement = NOW() WHERE transaction_id = ?',
+            ['rejete', transactionId]
+        );
+      } catch(e) {}
+
+      return res.status(500).json({ 
+        message: professionalMessage,
+        details: `CinetPay Code: ${errorCode}` // Détail technique pour le développeur
+      });
+    }
 
   } catch (error) {
-    await connection.rollback();
-    console.error("Erreur withdrawEarnings:", error);
-    res.status(500).json({ message: 'Erreur serveur' });
+    if (connection) await connection.rollback();
+    console.error("💥 Erreur serveur:", error);
+    res.status(500).json({ message: 'Erreur serveur interne inattendue.' });
   } finally {
-    connection.release();
+    if (connection) connection.release();
   }
 };
 // historique de retrait

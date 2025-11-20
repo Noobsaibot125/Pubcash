@@ -21,5 +21,8 @@ router.post('/facebook', authController.facebookAuth);
 router.post('/google', authController.googleAuth);
 router.patch('/utilisateur/complete-profile', authController.completeFacebookProfile);
 router.post('/refresh-token', authController.refreshToken); 
+router.post('/forgot-password', authController.forgotPassword);
+router.post('/verify-reset-code', authController.verifyResetCode);
+router.post('/reset-password', authController.resetPassword);
 router.post('/logout', authController.logout); 
 module.exports = router;

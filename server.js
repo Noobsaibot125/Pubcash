@@ -15,6 +15,7 @@ const mainRouter = require('./src/routes');
 const clientController = require('./src/controllers/clientController');
 const pool = require('./src/config/db');
 const publicRoutes = require('./src/routes/publicRoutes');
+
 // --- Initialisation d'Express et du serveur HTTP ---
 const app = express();
 const server = http.createServer(app);
@@ -75,6 +76,11 @@ requiredDirs.forEach(dir => {
 // --- MIDDLEWARES ---
 // Appliquer la politique CORS à toutes les routes HTTP
 app.use(cors(corsOptions)); 
+
+// IMPORTANT: Désactiver CORS pour les webhooks CinetPay (ils n'envoient pas d'origin)
+app.use('/api/callbacks/cinetpay/withdrawal', express.json());
+app.use('/webhook/cinetpay', express.json());
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -91,12 +97,97 @@ app.use('/uploads', (req, res, next) => {
 });
 app.use('/uploads', express.static(uploadsDir));
 
-// --- WEBHOOK PUBLIC CinetPay ---
+// ======================================================
+// --- WEBHOOKS CINETPAY (CORRIGÉS) ---
+// ======================================================
+
+// Webhook pour les paiements clients (existant)
 app.post('/webhook/cinetpay', clientController.cinetpayNotify);
 
+// ======================================================
+// --- NOUVEAU : WEBHOOK POUR LES RETRAITS UTILISATEURS ---
+// ======================================================
+
+// Route pour les retraits utilisateurs
+app.post('/api/callbacks/cinetpay/withdrawal', async (req, res) => {
+  try {
+    console.log('🔔 Webhook CinetPay Retrait reçu:', JSON.stringify(req.body, null, 2));
+    
+    const { client_transaction_id, status, message } = req.body;
+    
+    if (client_transaction_id) {
+      let statut = 'en_cours';
+      
+      if (status === 'SUCCESS') {
+        statut = 'traite';
+        console.log(`✅ Retrait ${client_transaction_id} réussi`);
+      } else if (status === 'FAILED') {
+        statut = 'rejete';
+        console.log(`❌ Retrait ${client_transaction_id} échoué: ${message}`);
+        
+        // Restaurer le solde utilisateur en cas d'échec
+        try {
+          const [demandeRows] = await pool.execute(
+            'SELECT id_utilisateur, montant FROM demandes_retrait WHERE transaction_id = ?',
+            [client_transaction_id]
+          );
+          
+          if (demandeRows.length > 0) {
+            const { id_utilisateur, montant } = demandeRows[0];
+            await pool.execute(
+              'UPDATE utilisateurs SET remuneration_utilisateur = COALESCE(remuneration_utilisateur, 0) + ? WHERE id = ?',
+              [montant, id_utilisateur]
+            );
+            console.log(`💰 Solde restauré pour l'utilisateur ${id_utilisateur}: +${montant} XOF`);
+          }
+        } catch (soldeError) {
+          console.error('❌ Erreur lors de la restauration du solde:', soldeError);
+        }
+      }
+      
+      // Mettre à jour le statut dans la base de données
+      await pool.execute(
+        'UPDATE demandes_retrait SET statut = ?, date_traitement = NOW() WHERE transaction_id = ?',
+        [statut, client_transaction_id]
+      );
+      
+      console.log(`📝 Statut mis à jour: ${client_transaction_id} -> ${statut}`);
+      
+      // Notifier l'utilisateur via Socket.IO si connecté
+      try {
+        const [demandeRows] = await pool.execute(
+          'SELECT id_utilisateur FROM demandes_retrait WHERE transaction_id = ?',
+          [client_transaction_id]
+        );
+        
+        if (demandeRows.length > 0) {
+          const userId = demandeRows[0].id_utilisateur;
+          io.to(`user-${userId}`).emit('withdrawal-updated', {
+            requestId: client_transaction_id,
+            status: statut,
+            message: message || 'Statut mis à jour'
+          });
+          console.log(`📢 Notification envoyée à l'utilisateur ${userId}`);
+        }
+      } catch (notifError) {
+        console.error('❌ Erreur lors de la notification:', notifError);
+      }
+    }
+    
+    res.status(200).json({ message: 'Webhook processed successfully' });
+  } catch (error) {
+    console.error('❌ Erreur webhook CinetPay Retrait:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ======================================================
 // --- ROUTES PRINCIPALES DE L'API ---
+// ======================================================
+
 app.use('/api', mainRouter);
 app.use('/api', publicRoutes);
+
 // ======================================================
 // --- GESTION DES CONNEXIONS WEBSOCKET ---
 // ======================================================
@@ -197,8 +288,22 @@ io.on('connection', (socket) => {
   });
 });
 
+// ======================================================
+// --- ROUTE DE SANTÉ POUR VÉRIFICATION ---
+// ======================================================
+
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'OK', 
+    message: 'Serveur Pub-Cash en ligne',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // --- DÉMARRAGE DU SERVEUR ---
 const PORT = process.env.PORT || process.env.API_PORT || 5000;
 server.listen(PORT, () => {
   console.log(`Serveur démarré et écoute sur le port ${PORT}`);
+  console.log(`🌐 Webhook retraits disponible sur: https://pub-cash.com/api/callbacks/cinetpay/withdrawal`);
+  console.log(`🔧 Route santé disponible sur: http://localhost:${PORT}/health`);
 });
