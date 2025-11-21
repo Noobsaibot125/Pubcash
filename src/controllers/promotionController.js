@@ -3,6 +3,7 @@ const axios = require('axios');
 const pool = require('../config/db');
 const { sendPromotionFinishedEmail } = require('../services/emailService');
 const { v4: uuidv4 } = require('uuid');
+const https = require('https'); // <--- AJOUTE CETTE LIGNE
 const FormData = require('form-data');
 const { URLSearchParams } = require('url');
 exports.getPromotionsForUser = async (req, res) => {
@@ -493,7 +494,8 @@ async function getCinetPayToken() {
 
   try {
       const response = await axios.post('https://client.cinetpay.com/v1/auth/login', formData, {
-          headers: formData.getHeaders()
+          headers: formData.getHeaders(),
+          httpsAgent: httpsAgent // <--- AJOUTE CECI
       });
       if (String(response.data.code) === '0') {
           return response.data.data?.token || response.data.token;
@@ -505,6 +507,7 @@ async function getCinetPayToken() {
       throw error;
   }
 }
+const httpsAgent = new https.Agent({ family: 4 });
 exports.withdrawEarnings = async (req, res) => {
   const userId = req.user.id;
   // Simule l'entrée utilisateur standard
@@ -648,7 +651,8 @@ exports.withdrawEarnings = async (req, res) => {
         method: 'post',
         url: `https://client.cinetpay.com/v1/transfer/money/send/contact?token=${token}&lang=fr&transaction_id=${transactionId}`,
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        data: paramsTransfer
+        data: paramsTransfer,
+        httpsAgent: httpsAgent
       };
 
       const apiResponse = await axios(configTransfer);
