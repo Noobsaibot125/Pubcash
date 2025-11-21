@@ -997,3 +997,24 @@ exports.getRealTimeStats = async (req, res) => {
         });
     }
 };
+exports.getRechargeHistory = async (req, res) => {
+  const clientId = req.user.id;
+
+  try {
+      // On récupère les transactions de la table cinetpay_transactions
+      // C'est cette table qui contient l'historique qui alimente le 'solde_recharge'
+      const [transactions] = await pool.execute(
+          `SELECT transaction_id, amount, status, created_at 
+           FROM cinetpay_transactions 
+           WHERE client_id = ? 
+           ORDER BY created_at DESC`,
+          [clientId]
+      );
+
+      res.status(200).json(transactions);
+
+  } catch (error) {
+      console.error("Erreur getRechargeHistory:", error);
+      res.status(500).json({ message: 'Erreur lors de la récupération de l\'historique.' });
+  }
+};
