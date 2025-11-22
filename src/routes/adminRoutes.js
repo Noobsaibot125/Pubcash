@@ -50,7 +50,9 @@ router.post(
   upload.fields([
     { name: 'logo', maxCount: 1 },
     { name: 'image', maxCount: 1 },
-    { name: 'video', maxCount: 1 }
+    { name: 'video', maxCount: 1 },
+    { name: 'advertisers_image', maxCount: 1 },
+    { name: 'users_image', maxCount: 1 }
   ]),
   toUploadResults,
   adminLandingController.createOrUpdateInfoAccueil
