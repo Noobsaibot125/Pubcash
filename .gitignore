@@ -2,3 +2,8 @@
 .env
 check_balance.js
 createAdmin.js
+uploads/background/*
+uploads/videos/*
+uploads/thumbnails/*
+uploads/landing/*
+uploads/profile/*
