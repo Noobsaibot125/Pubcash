@@ -1,0 +1,5 @@
+        };
+
+// Export helper if needed elsewhere
+// (optional, peut être utile si tu veux l'appeler ailleurs)
+// exports.sendResetPasswordEmail = sendResetPasswordEmail;

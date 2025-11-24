@@ -1,4 +1,4 @@
-// src/controllers/authController.js
+﻿// src/controllers/authController.js
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
@@ -8,28 +8,28 @@ const axios = require('axios');
 exports.registerAdmin = async (req, res) => {
     const { nom_utilisateur, email, mot_de_passe, invitationCode } = req.body;
 
-    // Étape 1 : Vérifier le code secret d'invitation
+    // ├ëtape 1 : V├⌐rifier le code secret d'invitation
     if (invitationCode !== process.env.ADMIN_INVITATION_CODE) {
         return res.status(403).json({ message: 'Code d\'invitation incorrect.' });
     }
 
-    // Étape 2 : Valider les autres champs
+    // ├ëtape 2 : Valider les autres champs
     if (!nom_utilisateur || !email || !mot_de_passe) {
         return res.status(400).json({ message: 'Tous les champs (sauf le code) sont requis.' });
     }
         
     try {
-        // Étape 3 : Hacher le mot de passe et insérer dans la BDD
+        // ├ëtape 3 : Hacher le mot de passe et ins├⌐rer dans la BDD
         const hashedPassword = await bcrypt.hash(mot_de_passe, 10);
         const [result] = await pool.execute(
             'INSERT INTO administrateurs (nom_utilisateur, email, mot_de_passe, role) VALUES (?, ?, ?, ?)',
             [nom_utilisateur, email, hashedPassword, 'superadmin']
         );
-        res.status(201).json({ message: 'Super Admin créé avec succès !', adminId: result.insertId });
+        res.status(201).json({ message: 'Super Admin cr├⌐├⌐ avec succ├¿s !', adminId: result.insertId });
 
     } catch (error) {
         if (error.code === 'ER_DUP_ENTRY') {
-            return res.status(409).json({ message: 'Cet email est déjà utilisé.' });
+            return res.status(409).json({ message: 'Cet email est d├⌐j├á utilis├⌐.' });
         }
         console.error("Erreur registerAdmin:", error);
         res.status(500).json({ message: 'Erreur serveur' });
@@ -50,14 +50,14 @@ const sendOtpEmail = async (email, otp) => {
     await transporter.sendMail({
       from: `"PubCash" <${process.env.EMAIL_USER}>`,
       to: email,
-      subject: "Votre code de vérification PubCash",
-      text: `Votre code de vérification est : ${otp}`,
-      html: `<b>Votre code de vérification est : ${otp}</b><p>Ce code expirera dans 10 minutes.</p>`,
+      subject: "Votre code de verification PubCash",
+      text: `Votre code de verification est : ${otp}`,
+      html: `<b>Votre code de verification est : ${otp}</b><p>Ce code expirera dans 10 minutes.</p>`,
     });
   };
   
   
-  // --- FONCTION REGISTERCLIENT MISE À JOUR ---
+  // --- FONCTION REGISTERCLIENT MISE ├Ç JOUR ---
   const checkEmailExists = async (email) => {
     const [admins] = await pool.execute('SELECT id FROM administrateurs WHERE email = ?', [email]);
     const [clients] = await pool.execute('SELECT id FROM clients WHERE email = ?', [email]);
@@ -68,45 +68,109 @@ const sendOtpEmail = async (email, otp) => {
 
 // Modifiez registerClient
 exports.registerClient = async (req, res) => {
-  // AJOUT DE 'genre'
-  const { nom, prenom, nom_utilisateur, email, mot_de_passe, telephone, commune, genre } = req.body;
+    console.log("📥 Données reçues:", req.body); // Pour voir ce que React envoie
 
-  if (!nom || !prenom || !nom_utilisateur || !email || !mot_de_passe || !telephone || !commune) {
-      return res.status(400).json({ message: 'Tous les champs (sauf genre) sont requis.' });
-  }
+    // 1. On récupère TOUS les champs, y compris les nouveaux pour l'entreprise
+    const { 
+        nom, prenom, nom_utilisateur, email, mot_de_passe, 
+        telephone, commune, genre, type_compte, nom_entreprise, rccm 
+    } = req.body;
 
-  try {
-      const emailExists = await checkEmailExists(email);
-      if (emailExists) {
-          return res.status(409).json({ message: 'Cet email est déjà utilisé.' });
-      }
+    // 2. Validation des champs COMMUNS (ceux que tout le monde doit avoir)
+    if (!email || !mot_de_passe || !telephone || !commune) {
+        return res.status(400).json({ message: 'Email, mot de passe, téléphone et commune sont requis.' });
+    }
 
-      const hashedPassword = await bcrypt.hash(mot_de_passe, 10);
-      const otp = Math.floor(10000 + Math.random() * 90000).toString(); 
-      const otpExpiration = new Date(Date.now() + 10 * 60 * 1000);
+    // 3. Validation CONDITIONNELLE (C'est ici que ça bloquait avant)
+    const isEntreprise = type_compte === 'entreprise';
 
-      const [result] = await pool.execute(
-          // AJOUT DE 'genre' DANS LA REQUÊTE
-          `INSERT INTO clients (nom, prenom, nom_utilisateur, email, telephone, mot_de_passe, commune, genre, otp_code, otp_expiration) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          // AJOUT DE 'genre' DANS LES VALEURS
-          [nom, prenom, nom_utilisateur, email, telephone, hashedPassword, commune, genre || null, otp, otpExpiration]
-      );
+    if (isEntreprise) {
+        // Si c'est une entreprise, on exige le nom de l'entreprise et le RCCM
+        if (!nom_entreprise || !rccm) {
+            return res.status(400).json({ message: 'Le nom de l\'entreprise et le RCCM sont requis.' });
+        }
+    } else {
+        // Si c'est un particulier, on exige nom, prénom et pseudo
+        if (!nom || !prenom || !nom_utilisateur) {
+            return res.status(400).json({ message: 'Nom, prénom et nom d\'utilisateur sont requis.' });
+        }
+    }
 
-      await sendOtpEmail(email, otp);
-      res.status(201).json({ message: 'Promoteur inscrit. Veuillez vérifier votre email pour le code OTP.', email });
-  } catch (error) {
-      if (error.code === 'ER_DUP_ENTRY') {
-          return res.status(409).json({ message: 'Cet email ou téléphone est déjà utilisé.' });
-      }
-      console.error("Erreur registerClient:", error);
-      res.status(500).json({ message: 'Erreur serveur' });
-  }
+    try {
+        // 4. Vérification doublon email
+        const emailExists = await checkEmailExists(email);
+        if (emailExists) {
+            return res.status(409).json({ message: 'Cet email est déjà utilisé.' });
+        }
+
+        // 5. Hashage mot de passe et OTP
+        const hashedPassword = await bcrypt.hash(mot_de_passe, 10);
+        const otp = Math.floor(10000 + Math.random() * 90000).toString();
+        const otpExpiration = new Date(Date.now() + 10 * 60 * 1000);
+
+        // 6. Préparation des données pour SQL (Gestion des NULL)
+        const finalNom = isEntreprise ? null : nom;
+        const finalPrenom = isEntreprise ? null : prenom;
+        
+        // Astuce : On utilise le nom de l'entreprise comme pseudo interne si c'est une entreprise (pour éviter les doublons vides)
+        const finalNomUtilisateur = isEntreprise ? nom_entreprise.replace(/\s+/g, '_').toLowerCase() : nom_utilisateur;
+        
+        const finalNomEntreprise = isEntreprise ? nom_entreprise : null;
+        const finalRccm = isEntreprise ? rccm : null;
+        const finalGenre = isEntreprise ? null : genre;
+        const finalTypeCompte = isEntreprise ? 'entreprise' : 'particulier';
+
+        // 7. Insertion en Base de Données (Mise à jour avec les colonnes entreprise)
+        const [result] = await pool.execute(
+            `INSERT INTO clients (
+                nom, prenom, nom_utilisateur, email, telephone, mot_de_passe, commune, genre, 
+                otp_code, otp_expiration, type_compte, nom_entreprise, rccm, est_verifie, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+            [
+                finalNom, 
+                finalPrenom, 
+                finalNomUtilisateur, 
+                email, 
+                telephone, 
+                hashedPassword, 
+                commune, 
+                finalGenre || null, 
+                otp, 
+                otpExpiration, 
+                finalTypeCompte, 
+                finalNomEntreprise, 
+                finalRccm,
+                false // Important : on met est_verifie à false par défaut
+            ]
+        );
+
+        // 8. Envoi email
+        await sendOtpEmail(email, otp);
+        
+        res.status(201).json({ 
+            message: 'Inscription réussie. Veuillez vérifier votre email.', 
+            clientId: result.insertId,
+            email 
+        });
+
+    } catch (error) {
+        console.error("❌ Erreur registerClient:", error);
+        
+        if (error.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ message: 'Cet email, téléphone ou nom d\'utilisateur est déjà utilisé.' });
+        }
+        // Gestion de l'erreur si vous avez oublié de mettre à jour la BDD
+        if (error.code === 'ER_BAD_FIELD_ERROR') {
+             return res.status(500).json({ message: 'Erreur technique : Colonnes manquantes dans la base de données (type_compte, nom_entreprise, etc.)' });
+        }
+        
+        res.status(500).json({ message: 'Erreur serveur lors de l\'inscription.' });
+    }
 };
-// --- NOUVELLE FONCTION UTILITAIRE POUR GÉNÉRER LES TOKENS ---
-// (Pour éviter la duplication de code)
+// --- NOUVELLE FONCTION UTILITAIRE POUR G├ëN├ëRER LES TOKENS ---
+// (Pour ├⌐viter la duplication de code)
 const generateAndStoreTokens = async (res, user, userTable, role) => {
-  // Le rôle est soit passé en argument (pour utilisateur), soit pris de la BDD
+  // Le r├┤le est soit pass├⌐ en argument (pour utilisateur), soit pris de la BDD
   const userRole = role || user.role;
   const payload = { id: user.id, email: user.email, role: userRole };
 
@@ -116,7 +180,7 @@ const generateAndStoreTokens = async (res, user, userTable, role) => {
   // Stocker le refresh token
   await pool.execute(`UPDATE ${userTable} SET refresh_token = ? WHERE id = ?`, [refreshToken, user.id]);
 
-  // Mettre à jour le statut 'en ligne' pour les utilisateurs
+  // Mettre ├á jour le statut 'en ligne' pour les utilisateurs
   if (userTable === 'utilisateurs') {
       await pool.execute(
           'UPDATE utilisateurs SET est_en_ligne = ?, derniere_connexion = NOW() WHERE id = ?',
@@ -131,25 +195,25 @@ const generateAndStoreTokens = async (res, user, userTable, role) => {
       user: { id: user.id, email: user.email }
   });
 };
-  // --- NOUVELLE FONCTION POUR VÉRIFIER L'OTP ---
+  // --- NOUVELLE FONCTION POUR V├ëRIFIER L'OTP ---
   exports.verifyOtp = async (req, res) => {
     const { email, otp } = req.body;
     try {
         const [rows] = await pool.execute('SELECT * FROM clients WHERE email = ?', [email]);
         const user = rows[0];
 
-        if (!user) return res.status(404).json({ message: "Utilisateur non trouvé." });
+        if (!user) return res.status(404).json({ message: "Utilisateur non trouv├⌐." });
         if (user.otp_code !== otp) return res.status(400).json({ message: "Code OTP incorrect." });
-        if (new Date() > new Date(user.otp_expiration)) return res.status(400).json({ message: "Code OTP expiré." });
+        if (new Date() > new Date(user.otp_expiration)) return res.status(400).json({ message: "Code OTP expir├⌐." });
 
-        // Si tout est bon, on vérifie l'utilisateur
+        // Si tout est bon, on v├⌐rifie l'utilisateur
         await pool.execute(
             'UPDATE clients SET est_verifie = TRUE, otp_code = NULL, otp_expiration = NULL WHERE id = ?',
             [user.id]
         );
 
-        // CORRECTION : Supprimer la deuxième réponse inutile
-        res.status(200).json({ message: "Compte vérifié avec succès ! Vous pouvez maintenant vous connecter." });
+        // CORRECTION : Supprimer la deuxi├¿me r├⌐ponse inutile
+        res.status(200).json({ message: "Compte v├⌐rifi├⌐ avec succ├¿s ! Vous pouvez maintenant vous connecter." });
         
     } catch (error) {
         console.error("Erreur verifyOtp:", error);
@@ -172,7 +236,7 @@ exports.loginAdmin = async (req, res) => {
       const isMatch = await bcrypt.compare(password, user.mot_de_passe);
       if (!isMatch) return res.status(401).json({ message: 'Email ou mot de passe incorrect.' });
 
-      // (user.role est déjà 'superadmin' ou 'admin' dans la BDD)
+      // (user.role est d├⌐j├á 'superadmin' ou 'admin' dans la BDD)
       await generateAndStoreTokens(res, user, 'administrateurs');
 
   } catch (error) {
@@ -192,15 +256,15 @@ exports.loginClient = async (req, res) => {
 
       if (!user) return res.status(401).json({ message: 'Email ou mot de passe incorrect.' });
 
-      // Vérification cruciale pour les clients
+      // V├⌐rification cruciale pour les clients
       if (!user.est_verifie) {
-          return res.status(403).json({ message: 'Votre compte n\'est pas vérifié.' });
+          return res.status(403).json({ message: 'Votre compte n\'est pas v├⌐rifi├⌐.' });
       }
 
       const isMatch = await bcrypt.compare(password, user.mot_de_passe);
       if (!isMatch) return res.status(401).json({ message: 'Email ou mot de passe incorrect.' });
 
-      // (user.role est 'client' par défaut dans la BDD)
+      // (user.role est 'client' par d├⌐faut dans la BDD)
       await generateAndStoreTokens(res, user, 'clients');
 
   } catch (error) {
@@ -211,7 +275,7 @@ exports.loginClient = async (req, res) => {
 
 // --- NOUVELLE FONCTION : LOGIN UTILISATEUR (avec Email ou Contact) ---
 exports.loginUtilisateur = async (req, res) => {
-  // AJOUT : on récupère push_notification
+  // AJOUT : on r├⌐cup├¿re push_notification
   const { identifier, password, push_notification } = req.body;
   
   if (!identifier || !password) return res.status(400).json({ message: 'Identifiant et mot de passe requis.' });
@@ -225,16 +289,16 @@ exports.loginUtilisateur = async (req, res) => {
 
       if (!user) return res.status(401).json({ message: 'Identifiant ou mot de passe incorrect.' });
 
-      // Gérer les comptes Facebook sans mot de passe
+      // G├⌐rer les comptes Facebook sans mot de passe
       if (!user.mot_de_passe && user.id_facebook) {
-           return res.status(401).json({ message: 'Ce compte est lié à Facebook. Veuillez vous connecter avec Facebook.' });
+           return res.status(401).json({ message: 'Ce compte est li├⌐ ├á Facebook. Veuillez vous connecter avec Facebook.' });
       }
       if (!user.mot_de_passe) {
            return res.status(401).json({ message: 'Identifiant ou mot de passe incorrect.' });
       }
 
       if (!user.est_actif) {
-          return res.status(403).json({ message: 'Votre compte a été désactivé. Veuillez contacter le support.' });
+          return res.status(403).json({ message: 'Votre compte a ├⌐t├⌐ d├⌐sactiv├⌐. Veuillez contacter le support.' });
       }
 
       const isMatch = await bcrypt.compare(password, user.mot_de_passe);
@@ -244,7 +308,7 @@ exports.loginUtilisateur = async (req, res) => {
       // <-- NOUVEAU : ENREGISTREMENT DU TOKEN PUSH
       // =================================================================
       if (push_notification) {
-          // On met à jour le token push de l'utilisateur
+          // On met ├á jour le token push de l'utilisateur
           await pool.execute(
               'UPDATE utilisateurs SET push_notification = ? WHERE id = ?',
               [push_notification, user.id]
@@ -260,7 +324,7 @@ exports.loginUtilisateur = async (req, res) => {
   }
 };
 exports.registerUtilisateur = async (req, res) => {
-  console.log('📨 Données reçues registerUtilisateur:', req.body);
+  console.log('≡ƒô¿ Donn├⌐es re├ºues registerUtilisateur:', req.body);
 
   const {
     nom_utilisateur,
@@ -275,7 +339,7 @@ exports.registerUtilisateur = async (req, res) => {
 
   // VALIDATION STRICTE selon le message d'erreur
   if (!nom_utilisateur || !email || !mot_de_passe || !commune || !date_naissance) {
-    console.log('❌ Champs manquants:', {
+    console.log('Γ¥î Champs manquants:', {
       nom_utilisateur: !nom_utilisateur,
       email: !email,
       mot_de_passe: !mot_de_passe,
@@ -288,10 +352,10 @@ exports.registerUtilisateur = async (req, res) => {
   }
 
   try {
-    // Vérifier si l'email existe déjà
+    // V├⌐rifier si l'email existe d├⌐j├á
     const emailExists = await checkEmailExists(email);
     if (emailExists) {
-      return res.status(409).json({ message: 'Cet email est déjà utilisé.' });
+      return res.status(409).json({ message: 'Cet email est d├⌐j├á utilis├⌐.' });
     }
 
     const hashedPassword = await bcrypt.hash(mot_de_passe, 10);
@@ -303,7 +367,7 @@ exports.registerUtilisateur = async (req, res) => {
       formattedDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
     }
 
-    console.log('✅ Données prêtes pour insertion:', {
+    console.log('Γ£à Donn├⌐es pr├¬tes pour insertion:', {
       nom_utilisateur,
       email,
       ville: ville || '',
@@ -313,7 +377,7 @@ exports.registerUtilisateur = async (req, res) => {
       genre: genre || null // Ajout pour log
     });
 
-    // INSERTION avec tous les champs nécessaires
+    // INSERTION avec tous les champs n├⌐cessaires
     // INSERTION avec 'genre'
     const [result] = await pool.execute(
       `INSERT INTO utilisateurs 
@@ -333,23 +397,23 @@ exports.registerUtilisateur = async (req, res) => {
       ]
     );
 
-    console.log('✅ Utilisateur créé avec ID:', result.insertId);
+    console.log('Γ£à Utilisateur cr├⌐├⌐ avec ID:', result.insertId);
     res.status(201).json({ 
-      message: 'Utilisateur inscrit avec succès !',
+      message: 'Utilisateur inscrit avec succ├¿s !',
       userId: result.insertId 
     });
 
   } catch (error) {
-    console.error('❌ Erreur registerUtilisateur:', error);
+    console.error('Γ¥î Erreur registerUtilisateur:', error);
     
     if (error.code === 'ER_DUP_ENTRY') {
       if (error.sqlMessage.includes('email')) {
-        return res.status(409).json({ message: 'Cet email est déjà utilisé.' });
+        return res.status(409).json({ message: 'Cet email est d├⌐j├á utilis├⌐.' });
       }
       if (error.sqlMessage.includes('nom_utilisateur')) {
-        return res.status(409).json({ message: 'Ce nom d\'utilisateur est déjà utilisé.' });
+        return res.status(409).json({ message: 'Ce nom d\'utilisateur est d├⌐j├á utilis├⌐.' });
       }
-      return res.status(409).json({ message: 'Nom d\'utilisateur ou email déjà utilisé.' });
+      return res.status(409).json({ message: 'Nom d\'utilisateur ou email d├⌐j├á utilis├⌐.' });
     }
     
     if (error.code === 'ER_TRUNCATED_WRONG_VALUE') {
@@ -357,7 +421,7 @@ exports.registerUtilisateur = async (req, res) => {
     }
     
     res.status(500).json({ 
-      message: 'Erreur serveur lors de la création du compte',
+      message: 'Erreur serveur lors de la cr├⌐ation du compte',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
@@ -365,7 +429,7 @@ exports.registerUtilisateur = async (req, res) => {
 
 // POST /auth/facebook
 exports.facebookAuth = async (req, res) => {
-  // AJOUT : on récupère push_notification
+  // AJOUT : on r├⌐cup├¿re push_notification
   const { accessToken, push_notification } = req.body;
 
   if (!accessToken) {
@@ -373,7 +437,7 @@ exports.facebookAuth = async (req, res) => {
   }
 
   try {
-      // ... [LOGIQUE FACEBOOK EXISTANTE : RÉCUPÉRATION PROFIL] ...
+      // ... [LOGIQUE FACEBOOK EXISTANTE : R├ëCUP├ëRATION PROFIL] ...
       console.log('Tentative de connexion Facebook...');
       const fbRes = await axios.get(`https://graph.facebook.com/v12.0/me`, {
           params: {
@@ -406,7 +470,7 @@ exports.facebookAuth = async (req, res) => {
       let user = rows[0];
 
       if (!user) {
-          // Création
+          // Cr├⌐ation
           const now = new Date();
           const [inserted] = await pool.execute(
               `INSERT INTO utilisateurs 
@@ -418,8 +482,8 @@ exports.facebookAuth = async (req, res) => {
           [rows] = await pool.execute('SELECT *, "utilisateur" as role FROM utilisateurs WHERE id = ?', [insertedId]);
           user = rows[0];
       } else {
-          // Mise à jour existante...
-          // ... [LOGIQUE UPDATE EXISTANTE COPIÉE DE TON CODE] ...
+          // Mise ├á jour existante...
+          // ... [LOGIQUE UPDATE EXISTANTE COPI├ëE DE TON CODE] ...
           const updates = [];
           const updateParams = [];
           if (photo_profil && photo_profil !== user.photo_profil) { updates.push('photo_profil = ?'); updateParams.push(photo_profil); }
@@ -443,12 +507,12 @@ exports.facebookAuth = async (req, res) => {
               'UPDATE utilisateurs SET push_notification = ? WHERE id = ?',
               [push_notification, user.id]
           );
-          // Mettre à jour l'objet user en mémoire pour le renvoyer au front (optionnel)
+          // Mettre ├á jour l'objet user en m├⌐moire pour le renvoyer au front (optionnel)
           user.push_notification = push_notification; 
       }
       // =================================================================
 
-      // Génération des tokens
+      // G├⌐n├⌐ration des tokens
       const payload = { id: user.id, email: user.email, role: 'utilisateur' };
       const newAccessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRATION || '15m' });
       const newRefreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.REFRESH_TOKEN_EXPIRATION || '7d' });
@@ -464,7 +528,7 @@ exports.facebookAuth = async (req, res) => {
               email: user.email,
               photo_profil: user.photo_profil,
               role: 'utilisateur',
-              push_notification: user.push_notification // On renvoie le token stocké
+              push_notification: user.push_notification // On renvoie le token stock├⌐
           },
           profileCompleted: Boolean(user.commune_choisie && user.date_naissance)
       });
@@ -485,7 +549,7 @@ exports.facebookAuth = async (req, res) => {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       const userId = decoded.id;
       
-      // MODIFICATION : Récupérer 'genre' et 'contact'
+      // MODIFICATION : R├⌐cup├⌐rer 'genre' et 'contact'
       const { commune_choisie, date_naissance, contact, genre } = req.body;
   
       // MODIFICATION : Validation
@@ -493,7 +557,7 @@ exports.facebookAuth = async (req, res) => {
         return res.status(400).json({ message: 'Commune, date de naissance, contact et genre sont requis.' });
       }
   
-      // MODIFICATION : Mettre à jour la BDD
+      // MODIFICATION : Mettre ├á jour la BDD
       await pool.execute(
         'UPDATE utilisateurs SET commune_choisie = ?, date_naissance = ?, contact = ?, genre = ? WHERE id = ?',
         [commune_choisie, date_naissance, contact, genre, userId]
@@ -503,7 +567,7 @@ exports.facebookAuth = async (req, res) => {
       const [rows] = await pool.execute('SELECT * FROM utilisateurs WHERE id = ?', [userId]);
       const user = rows[0];
   
-      // Nouvelle token (optionnel) pour rafraîchir payload si tu stockes la commune dedans
+      // Nouvelle token (optionnel) pour rafra├«chir payload si tu stockes la commune dedans
       const payload = { 
         id: user.id, 
         email: user.email, 
@@ -513,7 +577,7 @@ exports.facebookAuth = async (req, res) => {
     const newToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '8h' });
   
       res.status(200).json({
-        message: 'Profil mis à jour.',
+        message: 'Profil mis ├á jour.',
         token: newToken,
         user: {
           id: user.id,
@@ -534,7 +598,7 @@ exports.facebookAuth = async (req, res) => {
   };
   // POST /auth/google
   exports.googleAuth = async (req, res) => {
-    // AJOUT : on récupère push_notification
+    // AJOUT : on r├⌐cup├¿re push_notification
     const { accessToken, push_notification } = req.body;
 
     if (!accessToken) {
@@ -542,7 +606,7 @@ exports.facebookAuth = async (req, res) => {
     }
 
     try {
-        // ... [LOGIQUE GOOGLE EXISTANTE : RÉCUPÉRATION PROFIL] ...
+        // ... [LOGIQUE GOOGLE EXISTANTE : R├ëCUP├ëRATION PROFIL] ...
         console.log('Tentative connexion Google...');
         const googleRes = await axios.get('https://www.googleapis.com/oauth2/v3/userinfo', {
             headers: { Authorization: `Bearer ${accessToken}` },
@@ -556,13 +620,13 @@ exports.facebookAuth = async (req, res) => {
         const photo_profil = profile.picture || null;
         const nom_utilisateur = profile.name || [prenom, nom].filter(Boolean).join(' ') || `google_user_${id_google}`;
 
-        if (!email) return res.status(400).json({ message: "Impossible de récupérer l'email." });
+        if (!email) return res.status(400).json({ message: "Impossible de r├⌐cup├⌐rer l'email." });
 
         let [rows] = await pool.execute('SELECT * FROM utilisateurs WHERE id_google = ? OR email = ?', [id_google, email]);
         let user = rows[0];
 
         if (!user) {
-            // Création
+            // Cr├⌐ation
             const now = new Date();
             const [inserted] = await pool.execute(
                 `INSERT INTO utilisateurs 
@@ -574,7 +638,7 @@ exports.facebookAuth = async (req, res) => {
             [rows] = await pool.execute('SELECT *, "utilisateur" as role FROM utilisateurs WHERE id = ?', [insertedId]);
             user = rows[0];
         } else {
-             // Mise à jour existante...
+             // Mise ├á jour existante...
              const updates = [];
              const updateParams = [];
              if (photo_profil && photo_profil !== user.photo_profil) { updates.push('photo_profil = ?'), updateParams.push(photo_profil); }
@@ -606,7 +670,7 @@ exports.facebookAuth = async (req, res) => {
         const newAccessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRATION || '15m' });
         const newRefreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.REFRESH_TOKEN_EXPIRATION || '7d' });
         
-        // On met aussi à jour est_en_ligne ici pour être cohérent
+        // On met aussi ├á jour est_en_ligne ici pour ├¬tre coh├⌐rent
         await pool.execute(`UPDATE utilisateurs SET refresh_token = ?, est_en_ligne = 1, derniere_connexion = NOW() WHERE id = ?`, [newRefreshToken, user.id]);
 
         res.status(200).json({
@@ -635,50 +699,50 @@ exports.facebookAuth = async (req, res) => {
     }
 
     try {
-        // 1. Vérifier si le refresh token est valide
+        // 1. V├⌐rifier si le refresh token est valide
         const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
         
-        // 2. Trouver l'utilisateur et vérifier que le token correspond à celui en BDD
+        // 2. Trouver l'utilisateur et v├⌐rifier que le token correspond ├á celui en BDD
         const role = decoded.role;
         let userTable;
         if (role === 'superadmin' || role === 'admin') userTable = 'administrateurs';
         else if (role === 'client') userTable = 'clients';
         else if (role === 'utilisateur') userTable = 'utilisateurs';
-        else return res.status(403).json({ message: 'Rôle invalide dans le token.' });
+        else return res.status(403).json({ message: 'R├┤le invalide dans le token.' });
 
         const [rows] = await pool.execute(`SELECT refresh_token FROM ${userTable} WHERE id = ?`, [decoded.id]);
         const user = rows[0];
 
         if (!user || user.refresh_token !== token) {
-            return res.status(403).json({ message: 'Refresh Token invalide ou révoqué.' });
+            return res.status(403).json({ message: 'Refresh Token invalide ou r├⌐voqu├⌐.' });
         }
 
-        // 3. Générer un nouvel accessToken
+        // 3. G├⌐n├⌐rer un nouvel accessToken
         const payload = { id: decoded.id, email: decoded.email, role: decoded.role };
         const newAccessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRATION || '15m' });
 
         res.json({ accessToken: newAccessToken });
 
     } catch (error) {
-        // Si le token est expiré ou invalide, on renvoie une erreur 403
+        // Si le token est expir├⌐ ou invalide, on renvoie une erreur 403
         console.error("Erreur refreshToken:", error);
-        return res.status(403).json({ message: 'Refresh Token invalide ou expiré.' });
+        return res.status(403).json({ message: 'Refresh Token invalide ou expir├⌐.' });
     }
 };
 
 exports.logout = async (req, res) => {
-  // 1. Récupérer le token depuis le header Authorization
+  // 1. R├⌐cup├⌐rer le token depuis le header Authorization
   const authHeader = req.headers.authorization;
   
-  // Si pas de header ou mal formé, on considère que c'est déjà "ok" (204 No Content)
+  // Si pas de header ou mal form├⌐, on consid├¿re que c'est d├⌐j├á "ok" (204 No Content)
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.sendStatus(204); 
   }
 
-  const token = authHeader.split(' ')[1]; // On enlève "Bearer " pour garder juste le token
+  const token = authHeader.split(' ')[1]; // On enl├¿ve "Bearer " pour garder juste le token
 
   try {
-      // 2. Vérifier le token (On utilise JWT_SECRET car c'est l'Access Token qui est dans le header)
+      // 2. V├⌐rifier le token (On utilise JWT_SECRET car c'est l'Access Token qui est dans le header)
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       
       const userId = decoded.id;
@@ -690,12 +754,12 @@ exports.logout = async (req, res) => {
       else if (role === 'utilisateur') userTable = 'utilisateurs';
       else return res.sendStatus(204);
 
-      // 3. Effacer le refresh token en base de données (cela déconnecte effectivement la session)
+      // 3. Effacer le refresh token en base de donn├⌐es (cela d├⌐connecte effectivement la session)
       await pool.execute(`UPDATE ${userTable} SET refresh_token = NULL WHERE id = ?`, [userId]);
 
-      // 4. Gestion spécifique utilisateurs (Statut en ligne + Push Notification)
+      // 4. Gestion sp├⌐cifique utilisateurs (Statut en ligne + Push Notification)
       if (userTable === 'utilisateurs') {
-          console.log(`[LOGOUT] Déconnexion utilisateur ID: ${userId} via Header Authorization`);
+          console.log(`[LOGOUT] D├⌐connexion utilisateur ID: ${userId} via Header Authorization`);
           
           // =================================================================
           // SUPPRESSION DU TOKEN DE NOTIFICATION ET STATUT HORS LIGNE
@@ -728,15 +792,15 @@ exports.logout = async (req, res) => {
           }
       }
 
-      res.status(200).json({ message: 'Déconnexion réussie.' });
+      res.status(200).json({ message: 'D├⌐connexion r├⌐ussie.' });
 
   } catch (error) {
-      console.error("Erreur lors de la déconnexion:", error.message);
-      // Même si le token est expiré, on renvoie un succès car l'utilisateur veut partir
+      console.error("Erreur lors de la d├⌐connexion:", error.message);
+      // M├¬me si le token est expir├⌐, on renvoie un succ├¿s car l'utilisateur veut partir
       res.sendStatus(204);
   }
 };
-// --- FONCTION POUR MOT DE PASSE OUBLIÉ ---
+// --- FONCTION POUR MOT DE PASSE OUBLI├ë ---
 exports.forgotPassword = async (req, res) => {
   const { email } = req.body;
 
@@ -745,11 +809,11 @@ exports.forgotPassword = async (req, res) => {
   }
 
   try {
-      // Vérifier dans les trois tables si l'email existe ET a un mot de passe
+      // V├⌐rifier dans les trois tables si l'email existe ET a un mot de passe
       let user = null;
       let userType = null;
 
-      // Vérifier dans administrateurs
+      // V├⌐rifier dans administrateurs
       const [adminRows] = await pool.execute(
           'SELECT id, email, nom_utilisateur, mot_de_passe FROM administrateurs WHERE email = ? AND mot_de_passe IS NOT NULL',
           [email]
@@ -759,7 +823,7 @@ exports.forgotPassword = async (req, res) => {
           userType = 'administrateur';
       }
 
-      // Vérifier dans clients
+      // V├⌐rifier dans clients
       if (!user) {
           const [clientRows] = await pool.execute(
               'SELECT id, email, nom_utilisateur, mot_de_passe FROM clients WHERE email = ? AND mot_de_passe IS NOT NULL',
@@ -771,7 +835,7 @@ exports.forgotPassword = async (req, res) => {
           }
       }
 
-      // Vérifier dans utilisateurs
+      // V├⌐rifier dans utilisateurs
       if (!user) {
           const [userRows] = await pool.execute(
               'SELECT id, email, nom_utilisateur, mot_de_passe FROM utilisateurs WHERE email = ? AND mot_de_passe IS NOT NULL',
@@ -783,18 +847,18 @@ exports.forgotPassword = async (req, res) => {
           }
       }
 
-      // Si aucun utilisateur trouvé avec mot de passe
+      // Si aucun utilisateur trouv├⌐ avec mot de passe
       if (!user) {
           return res.status(404).json({ 
-              message: 'Aucun compte actif trouvé avec cet email.' 
+              message: 'Aucun compte actif trouv├⌐ avec cet email.' 
           });
       }
 
-      // Générer le code de réinitialisation
+      // G├⌐n├⌐rer le code de r├⌐initialisation
       const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
       const resetCodeExpiration = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
-      // Stocker le code dans la table appropriée
+      // Stocker le code dans la table appropri├⌐e
       let tableName;
       switch (userType) {
           case 'administrateur':
@@ -813,11 +877,11 @@ exports.forgotPassword = async (req, res) => {
           [resetCode, resetCodeExpiration, user.id]
       );
 
-      // Envoyer l'email de réinitialisation
+      // Envoyer l'email de r├⌐initialisation
       await sendResetPasswordEmail(email, resetCode, user.nom_utilisateur || user.nom);
 
       res.status(200).json({ 
-          message: 'Un code de réinitialisation a été envoyé à votre email.',
+          message: 'Un code de r├⌐initialisation a ├⌐t├⌐ envoy├⌐ ├á votre email.',
           email: email 
       });
 
@@ -827,7 +891,7 @@ exports.forgotPassword = async (req, res) => {
   }
 };
 
-// --- FONCTION POUR VÉRIFIER LE CODE DE RÉINITIALISATION ---
+// --- FONCTION POUR V├ëRIFIER LE CODE DE R├ëINITIALISATION ---
 exports.verifyResetCode = async (req, res) => {
   const { email, resetCode } = req.body;
 
@@ -836,7 +900,7 @@ exports.verifyResetCode = async (req, res) => {
   }
 
   try {
-      // Vérifier dans les trois tables
+      // V├⌐rifier dans les trois tables
       let user = null;
       let userType = null;
 
@@ -872,20 +936,20 @@ exports.verifyResetCode = async (req, res) => {
       }
 
       if (!user) {
-          return res.status(404).json({ message: 'Utilisateur non trouvé.' });
+          return res.status(404).json({ message: 'Utilisateur non trouv├⌐.' });
       }
 
-      // Vérifier le code et son expiration
+      // V├⌐rifier le code et son expiration
       if (!user.reset_code || user.reset_code !== resetCode) {
-          return res.status(400).json({ message: 'Code de réinitialisation incorrect.' });
+          return res.status(400).json({ message: 'Code de r├⌐initialisation incorrect.' });
       }
 
       if (new Date() > new Date(user.reset_code_expiration)) {
-          return res.status(400).json({ message: 'Code de réinitialisation expiré.' });
+          return res.status(400).json({ message: 'Code de r├⌐initialisation expir├⌐.' });
       }
 
       res.status(200).json({ 
-          message: 'Code vérifié avec succès.',
+          message: 'Code v├⌐rifi├⌐ avec succ├¿s.',
           email: email 
       });
 
@@ -895,7 +959,7 @@ exports.verifyResetCode = async (req, res) => {
   }
 };
 
-// --- FONCTION POUR RÉINITIALISER LE MOT DE PASSE ---
+// --- FONCTION POUR R├ëINITIALISER LE MOT DE PASSE ---
 exports.resetPassword = async (req, res) => {
   const { email, resetCode, newPassword } = req.body;
 
@@ -904,11 +968,11 @@ exports.resetPassword = async (req, res) => {
   }
 
   if (newPassword.length < 6) {
-      return res.status(400).json({ message: 'Le mot de passe doit contenir au moins 6 caractères.' });
+      return res.status(400).json({ message: 'Le mot de passe doit contenir au moins 6 caract├¿res.' });
   }
 
   try {
-      // Vérifier dans les trois tables
+      // V├⌐rifier dans les trois tables
       let user = null;
       let userType = null;
       let tableName;
@@ -948,28 +1012,28 @@ exports.resetPassword = async (req, res) => {
       }
 
       if (!user) {
-          return res.status(404).json({ message: 'Utilisateur non trouvé.' });
+          return res.status(404).json({ message: 'Utilisateur non trouv├⌐.' });
       }
 
-      // Vérifier le code et son expiration
+      // V├⌐rifier le code et son expiration
       if (!user.reset_code || user.reset_code !== resetCode) {
-          return res.status(400).json({ message: 'Code de réinitialisation incorrect.' });
+          return res.status(400).json({ message: 'Code de r├⌐initialisation incorrect.' });
       }
 
       if (new Date() > new Date(user.reset_code_expiration)) {
-          return res.status(400).json({ message: 'Code de réinitialisation expiré.' });
+          return res.status(400).json({ message: 'Code de r├⌐initialisation expir├⌐.' });
       }
 
       // Hacher le nouveau mot de passe
       const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-      // Mettre à jour le mot de passe et effacer le code de réinitialisation
+      // Mettre ├á jour le mot de passe et effacer le code de r├⌐initialisation
       await pool.execute(
           `UPDATE ${tableName} SET mot_de_passe = ?, reset_code = NULL, reset_code_expiration = NULL WHERE id = ?`,
           [hashedPassword, user.id]
       );
 
-      res.status(200).json({ message: 'Mot de passe réinitialisé avec succès.' });
+      res.status(200).json({ message: 'Mot de passe r├⌐initialis├⌐ avec succ├¿s.' });
 
   } catch (error) {
       console.error("Erreur resetPassword:", error);
@@ -977,7 +1041,7 @@ exports.resetPassword = async (req, res) => {
   }
 };
 
-// --- FONCTION POUR ENVOYER L'EMAIL DE RÉINITIALISATION ---
+// --- FONCTION POUR ENVOYER L'EMAIL DE R├ëINITIALISATION ---
 const sendResetPasswordEmail = async (email, resetCode, username) => {
   let transporter = nodemailer.createTransport({
       host: process.env.EMAIL_HOST,
@@ -1033,35 +1097,35 @@ const sendResetPasswordEmail = async (email, resetCode, username) => {
   <body>
       <div class="container">
           <div class="header">
-              <h1>RÉINITIALISATION DE MOT DE PASSE</h1>
+              <h1>R├ëINITIALISATION DE MOT DE PASSE</h1>
           </div>
           <div class="content">
               <p>Bonjour <strong>${username}</strong>,</p>
-              <p>Vous avez demandé la réinitialisation de votre mot de passe PubCash.</p>
+              <p>Vous avez demand├⌐ la r├⌐initialisation de votre mot de passe PubCash.</p>
               
               <div class="code-container">
-                  <p><strong>Votre code de vérification :</strong></p>
+                  <p><strong>Votre code de v├⌐rification :</strong></p>
                   <div class="reset-code">${resetCode}</div>
               </div>
 
               <div class="warning">
-                  <strong>⚠️ Important :</strong> Ce code expirera dans 15 minutes.
-                  Si vous n'avez pas demandé cette réinitialisation, veuillez ignorer cet email.
+                  <strong>ΓÜá∩╕Å Important :</strong> Ce code expirera dans 15 minutes.
+                  Si vous n'avez pas demand├⌐ cette r├⌐initialisation, veuillez ignorer cet email.
               </div>
 
-              <p>Pour compléter la réinitialisation :</p>
+              <p>Pour compl├⌐ter la r├⌐initialisation :</p>
               <ol>
                   <li>Copiez le code ci-dessus</li>
-                  <li>Rendez-vous sur la page de réinitialisation</li>
+                  <li>Rendez-vous sur la page de r├⌐initialisation</li>
                   <li>Entrez le code et choisissez votre nouveau mot de passe</li>
               </ol>
 
-              <p>Si vous rencontrez des difficultés, n'hésitez pas à contacter notre support.</p>
+              <p>Si vous rencontrez des difficult├⌐s, n'h├⌐sitez pas ├á contacter notre support.</p>
               
-              <p>Cordialement,<br><strong>L'ÉQUIPE PUBCASH</strong></p>
+              <p>Cordialement,<br><strong>L'├ëQUIPE PUBCASH</strong></p>
           </div>
           <div class="footer">
-              © 2025 PubCash. Tous droits réservés.
+              ┬⌐ 2025 PubCash. Tous droits r├⌐serv├⌐s.
           </div>
       </div>
   </body>
@@ -1071,7 +1135,7 @@ const sendResetPasswordEmail = async (email, resetCode, username) => {
   await transporter.sendMail({
       from: `"PubCash Support" <${process.env.EMAIL_USER}>`,
       to: email,
-      subject: "Réinitialisation de votre mot de passe PubCash",
+      subject: "R├⌐initialisation de votre mot de passe PubCash",
       html: emailHtml,
   });
 };
