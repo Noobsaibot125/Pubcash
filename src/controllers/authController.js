@@ -1097,14 +1097,14 @@ const sendResetPasswordEmail = async (email, resetCode, username) => {
   <body>
       <div class="container">
           <div class="header">
-              <h1>R├ëINITIALISATION DE MOT DE PASSE</h1>
+              <h1>Reinitialisation de mot de passe</h1>
           </div>
           <div class="content">
               <p>Bonjour <strong>${username}</strong>,</p>
-              <p>Vous avez demand├⌐ la r├⌐initialisation de votre mot de passe PubCash.</p>
+              <p>Vous avez demand├⌐ la reinitialisation de votre mot de passe PubCash.</p>
               
               <div class="code-container">
-                  <p><strong>Votre code de v├⌐rification :</strong></p>
+                  <p><strong>Votre code de verification :</strong></p>
                   <div class="reset-code">${resetCode}</div>
               </div>
 
@@ -1113,19 +1113,19 @@ const sendResetPasswordEmail = async (email, resetCode, username) => {
                   Si vous n'avez pas demand├⌐ cette r├⌐initialisation, veuillez ignorer cet email.
               </div>
 
-              <p>Pour compl├⌐ter la r├⌐initialisation :</p>
+              <p>Pour compl├⌐ter la reinitialisation :</p>
               <ol>
                   <li>Copiez le code ci-dessus</li>
-                  <li>Rendez-vous sur la page de r├⌐initialisation</li>
+                  <li>Rendez-vous sur la page de reinitialisation</li>
                   <li>Entrez le code et choisissez votre nouveau mot de passe</li>
               </ol>
 
-              <p>Si vous rencontrez des difficult├⌐s, n'h├⌐sitez pas ├á contacter notre support.</p>
+              <p>Si vous rencontrez des difficultés, n'hésitez pas à contacter notre support.</p>
               
-              <p>Cordialement,<br><strong>L'├ëQUIPE PUBCASH</strong></p>
+              <p>Cordialement,<br><strong>L'équipe PubCash</strong></p>
           </div>
           <div class="footer">
-              ┬⌐ 2025 PubCash. Tous droits r├⌐serv├⌐s.
+              © 2025 PubCash. Tous droits reservés.
           </div>
       </div>
   </body>
@@ -1135,7 +1135,7 @@ const sendResetPasswordEmail = async (email, resetCode, username) => {
   await transporter.sendMail({
       from: `"PubCash Support" <${process.env.EMAIL_USER}>`,
       to: email,
-      subject: "R├⌐initialisation de votre mot de passe PubCash",
+      subject: "Reinitialisation de votre mot de passe PubCash",
       html: emailHtml,
   });
 };
