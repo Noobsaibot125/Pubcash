@@ -6,38 +6,38 @@ const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 
 exports.getClients = async (req, res) => {
-    try {
-      // sélectionne les champs que ton front attend
-      const [rows] = await pool.execute(
-        `SELECT id, nom, prenom, nom_utilisateur, email, commune, solde_recharge
+  try {
+    // sélectionne les champs que ton front attend
+    const [rows] = await pool.execute(
+      `SELECT id, nom, prenom, nom_utilisateur, email, commune, solde_recharge
          FROM clients`
-      );
-      return res.status(200).json(rows);
-    } catch (err) {
-      console.error('Erreur getClients:', err);
-      return res.status(500).json({ message: 'Erreur serveur' });
+    );
+    return res.status(200).json(rows);
+  } catch (err) {
+    console.error('Erreur getClients:', err);
+    return res.status(500).json({ message: 'Erreur serveur' });
+  }
+};
+exports.getAdminWallet = async (req, res) => {
+  try {
+    const [rows] = await pool.execute('SELECT solde FROM portefeuille_admin WHERE id = 1');
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'Portefeuille admin non trouvé.' });
     }
-  };
-  exports.getAdminWallet = async (req, res) => {
-    try {
-        const [rows] = await pool.execute('SELECT solde FROM portefeuille_admin WHERE id = 1');
-        if (rows.length === 0) {
-            return res.status(404).json({ message: 'Portefeuille admin non trouvé.' });
-        }
-        res.status(200).json(rows[0]);
-    } catch (error) {
-        console.error("Erreur getAdminWallet:", error);
-        res.status(500).json({ message: 'Erreur serveur' });
-    }
+    res.status(200).json(rows[0]);
+  } catch (error) {
+    console.error("Erreur getAdminWallet:", error);
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
 };
 exports.getProfile = async (req, res) => {
   try {
-      const adminId = req.user.id;
-      const [rows] = await pool.execute('SELECT id, nom_utilisateur, email, role FROM administrateurs WHERE id = ?', [adminId]);
-      if (rows.length === 0) return res.status(404).json({ message: 'Admin non trouvé.' });
-      res.status(200).json(rows[0]);
+    const adminId = req.user.id;
+    const [rows] = await pool.execute('SELECT id, nom_utilisateur, email, role FROM administrateurs WHERE id = ?', [adminId]);
+    if (rows.length === 0) return res.status(404).json({ message: 'Admin non trouvé.' });
+    res.status(200).json(rows[0]);
   } catch (error) {
-      res.status(500).json({ message: 'Erreur serveur' });
+    res.status(500).json({ message: 'Erreur serveur' });
   }
 };
 // --- NOUVELLE FONCTION POUR METTRE À JOUR LE PROFIL ADMIN ---
@@ -46,85 +46,96 @@ exports.updateProfile = async (req, res) => {
   const { nom_utilisateur, email, newPassword, currentPassword } = req.body;
 
   try {
-      // Validation des champs de base
-      if (!nom_utilisateur || !email) {
-          return res.status(400).json({ message: 'Le nom d\'utilisateur et l\'email sont requis.' });
+    // Validation des champs de base
+    if (!nom_utilisateur || !email) {
+      return res.status(400).json({ message: 'Le nom d\'utilisateur et l\'email sont requis.' });
+    }
+
+    // Vérifier si le nouvel email est déjà utilisé par un autre admin
+    const [existingEmail] = await pool.execute(
+      'SELECT id FROM administrateurs WHERE email = ? AND id != ?',
+      [email, adminId]
+    );
+    if (existingEmail.length > 0) {
+      return res.status(409).json({ message: 'Cet email est déjà utilisé par un autre administrateur.' });
+    }
+
+    // Mettre à jour les informations de base (nom d'utilisateur et email)
+    await pool.execute(
+      'UPDATE administrateurs SET nom_utilisateur = ?, email = ? WHERE id = ?',
+      [nom_utilisateur, email, adminId]
+    );
+
+    // Logique de mise à jour du mot de passe (uniquement si les champs sont remplis)
+    if (newPassword && currentPassword) {
+      const [rows] = await pool.execute('SELECT mot_de_passe FROM administrateurs WHERE id = ?', [adminId]);
+      const admin = rows[0];
+
+      // Vérifier le mot de passe actuel
+      const isMatch = await bcrypt.compare(currentPassword, admin.mot_de_passe);
+      if (!isMatch) {
+        return res.status(401).json({ message: 'Le mot de passe actuel est incorrect.' });
       }
 
-      // Vérifier si le nouvel email est déjà utilisé par un autre admin
-      const [existingEmail] = await pool.execute(
-          'SELECT id FROM administrateurs WHERE email = ? AND id != ?', 
-          [email, adminId]
-      );
-      if (existingEmail.length > 0) {
-          return res.status(409).json({ message: 'Cet email est déjà utilisé par un autre administrateur.' });
-      }
+      // Hacher et mettre à jour le nouveau mot de passe
+      const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+      await pool.execute('UPDATE administrateurs SET mot_de_passe = ? WHERE id = ?', [hashedNewPassword, adminId]);
+    }
 
-      // Mettre à jour les informations de base (nom d'utilisateur et email)
-      await pool.execute(
-          'UPDATE administrateurs SET nom_utilisateur = ?, email = ? WHERE id = ?',
-          [nom_utilisateur, email, adminId]
-      );
-
-      // Logique de mise à jour du mot de passe (uniquement si les champs sont remplis)
-      if (newPassword && currentPassword) {
-          const [rows] = await pool.execute('SELECT mot_de_passe FROM administrateurs WHERE id = ?', [adminId]);
-          const admin = rows[0];
-
-          // Vérifier le mot de passe actuel
-          const isMatch = await bcrypt.compare(currentPassword, admin.mot_de_passe);
-          if (!isMatch) {
-              return res.status(401).json({ message: 'Le mot de passe actuel est incorrect.' });
-          }
-
-          // Hacher et mettre à jour le nouveau mot de passe
-          const hashedNewPassword = await bcrypt.hash(newPassword, 10);
-          await pool.execute('UPDATE administrateurs SET mot_de_passe = ? WHERE id = ?', [hashedNewPassword, adminId]);
-      }
-
-      res.status(200).json({ message: 'Profil administrateur mis à jour avec succès !' });
+    res.status(200).json({ message: 'Profil administrateur mis à jour avec succès !' });
 
   } catch (error) {
-      console.error("Erreur updateProfile (admin):", error);
-      res.status(500).json({ message: 'Erreur serveur' });
+    console.error("Erreur updateProfile (admin):", error);
+    res.status(500).json({ message: 'Erreur serveur' });
   }
 };
+
 // --- NOUVELLE FONCTION PRINCIPALE POUR LE DASHBOARD ---
 exports.getDashboardData = async (req, res) => {
   try {
-      // Lancer toutes les requêtes en parallèle pour une performance maximale
-      const [
-          walletRes,
-          clientsRes,
-          utilisateursRes,
-          activityRes
-      ] = await Promise.all([
-          pool.execute('SELECT solde FROM portefeuille_admin WHERE id = 1'),
-          pool.execute('SELECT id, nom, prenom, email, commune, solde_recharge, est_verifie FROM clients ORDER BY date_inscription DESC'),
-          pool.execute('SELECT COUNT(*) as total FROM utilisateurs'),
-          pool.execute(`
+    const userRole = req.user.role;
+
+    const promises = [
+      pool.execute('SELECT id, nom, prenom, email, commune, solde_recharge, est_verifie FROM clients ORDER BY date_inscription DESC'),
+      pool.execute('SELECT COUNT(*) as total FROM utilisateurs'),
+      pool.execute(`
             SELECT c.commune, COUNT(p.id) as activity_count 
             FROM promotions p
             JOIN clients c ON p.id_client = c.id
             GROUP BY c.commune 
             ORDER BY activity_count DESC
         `)
-      ]);
+    ];
 
-      const dashboardData = {
-          wallet: walletRes[0][0],
-          clients: clientsRes[0],
-          stats: {
-              totalClients: clientsRes[0].length,
-              totalUtilisateurs: utilisateursRes[0][0].total,
-          },
-          activityByCommune: activityRes[0]
-      };
+    if (userRole === 'superadmin') {
+      promises.push(pool.execute('SELECT solde FROM portefeuille_admin WHERE id = 1'));
+    }
 
-      res.status(200).json(dashboardData);
+    const results = await Promise.all(promises);
+
+    const clientsRes = results[0];
+    const utilisateursRes = results[1];
+    const activityRes = results[2];
+    let walletRes = null;
+
+    if (userRole === 'superadmin') {
+      walletRes = results[3];
+    }
+
+    const dashboardData = {
+      wallet: walletRes ? walletRes[0][0] : null,
+      clients: clientsRes[0],
+      stats: {
+        totalClients: clientsRes[0].length,
+        totalUtilisateurs: utilisateursRes[0][0].total,
+      },
+      activityByCommune: activityRes[0]
+    };
+
+    res.status(200).json(dashboardData);
   } catch (error) {
-      console.error("Erreur getDashboardData:", error);
-      res.status(500).json({ message: 'Erreur serveur' });
+    console.error("Erreur getDashboardData:", error);
+    res.status(500).json({ message: 'Erreur serveur' });
   }
 };
 
@@ -132,23 +143,23 @@ exports.getDashboardData = async (req, res) => {
 exports.deleteClient = async (req, res) => {
   const { clientId } = req.params;
   try {
-      // Dans une vraie app, on pourrait désactiver (SET is_active = false)
-      // au lieu de supprimer. Ici, on supprime pour la simplicité.
-      await pool.execute('DELETE FROM clients WHERE id = ?', [clientId]);
-      res.status(200).json({ message: 'Client supprimé avec succès.' });
+    // Dans une vraie app, on pourrait désactiver (SET is_active = false)
+    // au lieu de supprimer. Ici, on supprime pour la simplicité.
+    await pool.execute('DELETE FROM clients WHERE id = ?', [clientId]);
+    res.status(200).json({ message: 'Client supprimé avec succès.' });
   } catch (error) {
-      console.error("Erreur deleteClient:", error);
-      res.status(500).json({ message: 'Erreur serveur' });
+    console.error("Erreur deleteClient:", error);
+    res.status(500).json({ message: 'Erreur serveur' });
   }
 };
 
 // Nouvelle fonction pour récupérer les demandes de retrait
 exports.getWithdrawalRequests = async (req, res) => {
-    const { status } = req.query;
-    
-    try {
-        // 1. On modifie la requête SQL
-        let query = `
+  const { status } = req.query;
+
+  try {
+    // 1. On modifie la requête SQL
+    let query = `
             SELECT 
                 dr.id, dr.montant, dr.statut, dr.date_demande, dr.date_traitement,
                 dr.operateur_mobile, -- On ajoute l'opérateur
@@ -162,142 +173,142 @@ exports.getWithdrawalRequests = async (req, res) => {
             JOIN utilisateurs u ON dr.id_utilisateur = u.id
             LEFT JOIN administrateurs admin ON dr.id_admin = admin.id
         `;
-        
-        const params = [];
-        
-        if (status) {
-            query += ` WHERE dr.statut = ?`;
-            params.push(status);
-        }
-        
-        query += ` ORDER BY dr.date_demande DESC`;
-        
-        const [requests] = await pool.execute(query, params);
-        res.status(200).json(requests);
-    } catch (error) {
-        console.error("Erreur getWithdrawalRequests:", error);
-        res.status(500).json({ message: 'Erreur serveur' });
+
+    const params = [];
+
+    if (status) {
+      query += ` WHERE dr.statut = ?`;
+      params.push(status);
     }
+
+    query += ` ORDER BY dr.date_demande DESC`;
+
+    const [requests] = await pool.execute(query, params);
+    res.status(200).json(requests);
+  } catch (error) {
+    console.error("Erreur getWithdrawalRequests:", error);
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
 };
 
 // Fonction pour traiter une demande de retrait
 exports.processWithdrawalRequest = async (req, res) => {
-    const { requestId } = req.params;
-    const { status } = req.body;
-    const adminId = req.user.id;
-  
-    if (!status || !['traite', 'rejete'].includes(status)) {
-      return res.status(400).json({ message: 'Statut invalide. Doit être "traite" ou "rejete".' });
-    }
-  
-    const connection = await pool.getConnection();
-    try {
-      await connection.beginTransaction();
-  
-      const [requestRows] = await connection.execute(
-        'SELECT * FROM demandes_retrait WHERE id = ? AND statut = "en_attente" FOR UPDATE',
-        [requestId]
-      );
-      
-      if (requestRows.length === 0) {
-        await connection.rollback();
-        return res.status(404).json({ message: 'Demande non trouvée ou déjà traitée.' });
-      }
-      
-      const request = requestRows[0];
-      
-      await connection.execute(
-        'UPDATE demandes_retrait SET statut = ?, date_traitement = NOW(), id_admin = ? WHERE id = ?',
-        [status, adminId, requestId]
-      );
-      
-      if (status === 'rejete') {
-        await connection.execute(
-          'UPDATE utilisateurs SET remuneration_utilisateur = remuneration_utilisateur + ? WHERE id = ?',
-          [request.montant, request.id_utilisateur]
-        );
-      }
-      
-      await connection.commit();
-      
-      // Émettre l'événement WebSocket
-      const io = req.app.get('io');
-      io.to(`user-${request.id_utilisateur}`).emit('withdrawal-updated', {
-        requestId: requestId,
-        status: status
-      });
-      
-      res.status(200).json({ message: `Demande ${status === 'traite' ? 'traitée' : 'rejetée'} avec succès.` });
-    } catch (error) {
+  const { requestId } = req.params;
+  const { status } = req.body;
+  const adminId = req.user.id;
+
+  if (!status || !['traite', 'rejete'].includes(status)) {
+    return res.status(400).json({ message: 'Statut invalide. Doit être "traite" ou "rejete".' });
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [requestRows] = await connection.execute(
+      'SELECT * FROM demandes_retrait WHERE id = ? AND statut = "en_attente" FOR UPDATE',
+      [requestId]
+    );
+
+    if (requestRows.length === 0) {
       await connection.rollback();
-      console.error("Erreur processWithdrawalRequest:", error);
-      res.status(500).json({ message: 'Erreur serveur' });
-    } finally {
-      connection.release();
+      return res.status(404).json({ message: 'Demande non trouvée ou déjà traitée.' });
     }
-  };
+
+    const request = requestRows[0];
+
+    await connection.execute(
+      'UPDATE demandes_retrait SET statut = ?, date_traitement = NOW(), id_admin = ? WHERE id = ?',
+      [status, adminId, requestId]
+    );
+
+    if (status === 'rejete') {
+      await connection.execute(
+        'UPDATE utilisateurs SET remuneration_utilisateur = remuneration_utilisateur + ? WHERE id = ?',
+        [request.montant, request.id_utilisateur]
+      );
+    }
+
+    await connection.commit();
+
+    // Émettre l'événement WebSocket
+    const io = req.app.get('io');
+    io.to(`user-${request.id_utilisateur}`).emit('withdrawal-updated', {
+      requestId: requestId,
+      status: status
+    });
+
+    res.status(200).json({ message: `Demande ${status === 'traite' ? 'traitée' : 'rejetée'} avec succès.` });
+  } catch (error) {
+    await connection.rollback();
+    console.error("Erreur processWithdrawalRequest:", error);
+    res.status(500).json({ message: 'Erreur serveur' });
+  } finally {
+    connection.release();
+  }
+};
 
 // Récupérer la liste de tous les admins
 exports.getAllAdmins = async (req, res) => {
-    try {
-        // On exclut le mot de passe pour la sécurité
-        const [admins] = await pool.execute('SELECT id, nom_utilisateur, email, role, photo, date_creation FROM administrateurs');
-        res.status(200).json(admins);
-    } catch (error) {
-        console.error("Erreur getAllAdmins:", error);
-        res.status(500).json({ message: 'Erreur serveur' });
-    }
+  try {
+    // On exclut le mot de passe pour la sécurité
+    const [admins] = await pool.execute('SELECT id, nom_utilisateur, email, role, photo, date_creation FROM administrateurs');
+    res.status(200).json(admins);
+  } catch (error) {
+    console.error("Erreur getAllAdmins:", error);
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
 };
 
 // Créer un nouvel administrateur (role = 'admin')
 exports.createAdmin = async (req, res) => {
-    const { nom_utilisateur, email, mot_de_passe } = req.body;
+  const { nom_utilisateur, email, mot_de_passe } = req.body;
 
-    if (!nom_utilisateur || !email || !mot_de_passe) {
-        return res.status(400).json({ message: 'Tous les champs sont requis.' });
+  if (!nom_utilisateur || !email || !mot_de_passe) {
+    return res.status(400).json({ message: 'Tous les champs sont requis.' });
+  }
+
+  try {
+    // Vérifier si l'email est déjà utilisé
+    const [existing] = await pool.execute('SELECT id FROM administrateurs WHERE email = ?', [email]);
+    if (existing.length > 0) {
+      return res.status(409).json({ message: 'Cet email est déjà utilisé.' });
     }
 
-    try {
-        // Vérifier si l'email est déjà utilisé
-        const [existing] = await pool.execute('SELECT id FROM administrateurs WHERE email = ?', [email]);
-        if (existing.length > 0) {
-            return res.status(409).json({ message: 'Cet email est déjà utilisé.' });
-        }
+    const hashedPassword = await bcrypt.hash(mot_de_passe, 10);
 
-        const hashedPassword = await bcrypt.hash(mot_de_passe, 10);
-        
-        // On insère le nouvel utilisateur avec le rôle 'admin'
-        await pool.execute(
-            'INSERT INTO administrateurs (nom_utilisateur, email, mot_de_passe, role) VALUES (?, ?, ?, ?)',
-            [nom_utilisateur, email, hashedPassword, 'admin']
-        );
+    // On insère le nouvel utilisateur avec le rôle 'admin'
+    await pool.execute(
+      'INSERT INTO administrateurs (nom_utilisateur, email, mot_de_passe, role) VALUES (?, ?, ?, ?)',
+      [nom_utilisateur, email, hashedPassword, 'admin']
+    );
 
-        res.status(201).json({ message: 'Administrateur créé avec succès !' });
-    } catch (error) {
-        console.error("Erreur createAdmin:", error);
-        res.status(500).json({ message: 'Erreur serveur' });
-    }
+    res.status(201).json({ message: 'Administrateur créé avec succès !' });
+  } catch (error) {
+    console.error("Erreur createAdmin:", error);
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
 };
 
 // Supprimer un administrateur
 exports.deleteAdmin = async (req, res) => {
-    const { id } = req.params;
-    const superAdminId = req.user.id; // L'ID du superadmin qui fait la requête
+  const { id } = req.params;
+  const superAdminId = req.user.id; // L'ID du superadmin qui fait la requête
 
-    if (parseInt(id, 10) === superAdminId) {
-        return res.status(400).json({ message: 'Vous ne pouvez pas supprimer votre propre compte.' });
-    }
+  if (parseInt(id, 10) === superAdminId) {
+    return res.status(400).json({ message: 'Vous ne pouvez pas supprimer votre propre compte.' });
+  }
 
-    try {
-        const [result] = await pool.execute('DELETE FROM administrateurs WHERE id = ?', [id]);
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ message: 'Administrateur non trouvé.' });
-        }
-        res.status(200).json({ message: 'Administrateur supprimé avec succès.' });
-    } catch (error) {
-        console.error("Erreur deleteAdmin:", error);
-        res.status(500).json({ message: 'Erreur serveur' });
+  try {
+    const [result] = await pool.execute('DELETE FROM administrateurs WHERE id = ?', [id]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Administrateur non trouvé.' });
     }
+    res.status(200).json({ message: 'Administrateur supprimé avec succès.' });
+  } catch (error) {
+    console.error("Erreur deleteAdmin:", error);
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
 };
 
 exports.getOnlineUsers = async (req, res) => {
@@ -315,22 +326,22 @@ exports.getOnlineUsers = async (req, res) => {
 exports.createVille = async (req, res) => {
   const { nom } = req.body;
   if (!nom) {
-      return res.status(400).json({ message: 'Le nom de la ville est requis.' });
+    return res.status(400).json({ message: 'Le nom de la ville est requis.' });
   }
   try {
-      const [existing] = await pool.execute('SELECT id FROM villes WHERE nom = ?', [nom]);
-      if (existing.length > 0) {
-          return res.status(409).json({ message: 'Cette ville existe déjà.' });
-      }
-      const [result] = await pool.execute('INSERT INTO villes (nom) VALUES (?)', [nom]);
-      res.status(201).json({ 
-          id: result.insertId, 
-          nom, 
-          message: 'Ville créée avec succès !' 
-      });
+    const [existing] = await pool.execute('SELECT id FROM villes WHERE nom = ?', [nom]);
+    if (existing.length > 0) {
+      return res.status(409).json({ message: 'Cette ville existe déjà.' });
+    }
+    const [result] = await pool.execute('INSERT INTO villes (nom) VALUES (?)', [nom]);
+    res.status(201).json({
+      id: result.insertId,
+      nom,
+      message: 'Ville créée avec succès !'
+    });
   } catch (error) {
-      console.error("Erreur createVille:", error);
-      res.status(500).json({ message: 'Erreur serveur lors de la création de la ville.' });
+    console.error("Erreur createVille:", error);
+    res.status(500).json({ message: 'Erreur serveur lors de la création de la ville.' });
   }
 };
 
@@ -349,23 +360,23 @@ exports.getAllVilles = async (req, res) => {
 exports.createCommune = async (req, res) => {
   const { nom, id_ville } = req.body;
   if (!nom || !id_ville) {
-      return res.status(400).json({ message: 'Le nom de la commune et la ville associée sont requis.' });
+    return res.status(400).json({ message: 'Le nom de la commune et la ville associée sont requis.' });
   }
   try {
-      const [villeExists] = await pool.execute('SELECT id FROM villes WHERE id = ?', [id_ville]);
-      if (villeExists.length === 0) {
-          return res.status(404).json({ message: 'La ville sélectionnée n\'existe pas.' });
-      }
-      const [result] = await pool.execute('INSERT INTO communes (nom, id_ville) VALUES (?, ?)', [nom, id_ville]);
-      res.status(201).json({ 
-          id: result.insertId, 
-          nom, 
-          id_ville, 
-          message: 'Commune créée avec succès !' 
-      });
+    const [villeExists] = await pool.execute('SELECT id FROM villes WHERE id = ?', [id_ville]);
+    if (villeExists.length === 0) {
+      return res.status(404).json({ message: 'La ville sélectionnée n\'existe pas.' });
+    }
+    const [result] = await pool.execute('INSERT INTO communes (nom, id_ville) VALUES (?, ?)', [nom, id_ville]);
+    res.status(201).json({
+      id: result.insertId,
+      nom,
+      id_ville,
+      message: 'Commune créée avec succès !'
+    });
   } catch (error) {
-      console.error("Erreur createCommune:", error);
-      res.status(500).json({ message: 'Erreur serveur lors de la création de la commune.' });
+    console.error("Erreur createCommune:", error);
+    res.status(500).json({ message: 'Erreur serveur lors de la création de la commune.' });
   }
 };
 
