@@ -545,6 +545,7 @@ exports.withdrawEarnings = async (req, res) => {
 
   const transactionId = Date.now().toString() + Math.floor(Math.random() * 1000);
   const connection = await pool.getConnection();
+  let isCommitted = false; // Flag de sécurité
 
   try {
     await connection.beginTransaction();
@@ -574,13 +575,14 @@ exports.withdrawEarnings = async (req, res) => {
       [withdrawalAmount, userId]
     );
 
-    // Création de l'historique
+    // Création de l'historique (EN_COURS)
     await connection.execute(
       'INSERT INTO demandes_retrait (id_utilisateur, montant, operateur_mobile, statut, date_demande, transaction_id) VALUES (?, ?, ?, ?, NOW(), ?)',
       [userId, withdrawalAmount, operator, 'en_cours', transactionId]
     );
 
-    await connection.commit(); // On valide le débit ici avant d'appeler l'API externe
+    await connection.commit(); 
+    isCommitted = true; // On marque que l'argent est officiellement pris
 
     // --- 4. APPEL CINETPAY ---
     try {
@@ -588,15 +590,19 @@ exports.withdrawEarnings = async (req, res) => {
       const token = await getCinetPayToken();
 
       const emailContact = user.email || 'client@pubcash.com';
-      const nomContact = user.nom || 'Client';
-      const prenomContact = user.prenom || 'PubCash';
+      // Nettoyage des noms pour éviter le rejet par CinetPay (Accents, emojis...)
+      const sanitizeName = (str) => (str || '').replace(/[^a-zA-Z0-9 ]/g, '').trim();
+      const nomContact = sanitizeName(user.nom) || 'Client';
+      const prenomContact = sanitizeName(user.prenom) || 'PubCash';
       
-      // Configuration Wave / Url
       const paymentMethod = operator === 'wave' ? 'WAVECI' : null;
-      let notifyUrl = `${process.env.PRODUCTION_URL || 'https://pub-cash.com'}/api/callbacks/cinetpay/withdrawal`;
+      // Utilisation de l'URL de prod si dispo, sinon fallback
+      let notifyUrl = process.env.PRODUCTION_URL 
+        ? `${process.env.PRODUCTION_URL}/api/callbacks/cinetpay/withdrawal`
+        : 'https://pub-cash.com/api/callbacks/cinetpay/withdrawal';
 
-      // --- CORRECTION MAJEURE ICI : GESTION CONTACT ---
-      console.log(`➕ Tentative ajout/vérif contact CI ${cleanPhone}...`);
+      // --- AJOUT CONTACT (Blindé) ---
+      // On tente d'ajouter le contact. Si erreur, on log mais on continue.
       const paramsContact = new URLSearchParams();
       paramsContact.append('data', JSON.stringify([{
         prefix: '225',
@@ -606,13 +612,12 @@ exports.withdrawEarnings = async (req, res) => {
         email: emailContact
       }]));
 
-      // On essaie d'ajouter le contact, mais SI ÇA ECHOUE, ON S'EN FICHE et on continue
-      // (Car l'erreur veut souvent dire "Le contact existe déjà", ce qui est bon pour nous)
       await axios.post(`https://client.cinetpay.com/v1/transfer/contact?token=${token}&lang=fr`, paramsContact, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        httpsAgent: httpsAgent // Force IPv4
+        httpsAgent: httpsAgent
       }).catch(err => {
-        console.log("⚠️ Info Contact: L'ajout a échoué (probablement déjà existant), on continue le transfert.");
+        // Erreur ignorée volontairement (souvent car le contact existe déjà)
+        console.log(`⚠️ Info Contact: ${cleanPhone} déjà existant ou erreur mineure.`);
       });
 
       // --- TRANSFERT ---
@@ -631,60 +636,69 @@ exports.withdrawEarnings = async (req, res) => {
       const paramsTransfer = new URLSearchParams();
       paramsTransfer.append('data', JSON.stringify([transferObject]));
 
-      console.log(`📤 Envoi des fonds vers ${cleanPhone}...`);
+      console.log(`📤 Envoi des fonds vers ${cleanPhone} (Ref: ${transactionId})...`);
 
       const configTransfer = {
         method: 'post',
         url: `https://client.cinetpay.com/v1/transfer/money/send/contact?token=${token}&lang=fr&transaction_id=${transactionId}`,
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         data: paramsTransfer,
-        httpsAgent: httpsAgent // Force IPv4
+        httpsAgent: httpsAgent
       };
 
       const apiResponse = await axios(configTransfer);
       const result = apiResponse.data;
 
       if (String(result.code) === '0') {
-        // SUCCÈS
-        await pool.execute(
+        // SUCCÈS : Mise à jour à "TRAITE"
+        // On utilise 'connection' car elle est toujours ouverte
+        await connection.execute(
           'UPDATE demandes_retrait SET statut = ?, date_traitement = NOW() WHERE transaction_id = ?',
           ['traite', transactionId]
         );
         return res.status(200).json({ message: 'Retrait effectué avec succès !' });
+
       } else {
-        // ECHEC CINETPAY
+        // ECHEC CINETPAY (Code != 0)
         throw { response: { data: result } };
       }
 
     } catch (apiError) {
-      // --- GESTION ECHEC TRANSFERT (Remboursement) ---
       console.error("❌ ECHEC TRANSFERT:", apiError.response?.data || apiError.message);
       
-      // On rembourse l'utilisateur
-      await pool.execute(
-        'UPDATE utilisateurs SET remuneration_utilisateur = remuneration_utilisateur + ? WHERE id = ?',
-        [withdrawalAmount, userId]
-      );
-      
-      // On note l'échec dans l'historique
-      await pool.execute(
-        'UPDATE demandes_retrait SET statut = ?, date_traitement = NOW() WHERE transaction_id = ?',
-        ['rejete', transactionId]
-      );
+      // REMBOURSEMENT AUTOMATIQUE
+      // On utilise 'connection' pour être sûr que la requête passe
+      try {
+        await connection.execute(
+          'UPDATE utilisateurs SET remuneration_utilisateur = remuneration_utilisateur + ? WHERE id = ?',
+          [withdrawalAmount, userId]
+        );
+        
+        await connection.execute(
+          'UPDATE demandes_retrait SET statut = ?, erreur_details = ?, date_traitement = NOW() WHERE transaction_id = ?',
+          ['rejete', String(apiError.response?.data?.message || apiError.message).slice(0, 250), transactionId]
+        );
+      } catch (sqlErr) {
+        console.error("🚨 CRITIQUE: Erreur lors du remboursement BDD:", sqlErr);
+      }
 
+      // Analyse du code d'erreur pour le message utilisateur
       const responseData = apiError.response?.data || {};
       const errorCode = responseData.data?.[0]?.code || responseData.code || 'UNKNOWN';
 
       return res.status(500).json({
-        message: 'Le transfert a échoué (Opérateur ou Service indisponible). Vous avez été remboursé.',
-        details: `Code: ${errorCode}`
+        message: 'Le transfert a échoué (Opérateur indisponible ou numéro incorrect). Vous avez été remboursé.',
+        details: `CinetPay Code: ${errorCode}`
       });
     }
 
   } catch (error) {
-    if (connection) await connection.rollback();
-    console.error("💥 Erreur Critique:", error);
-    res.status(500).json({ message: 'Erreur serveur interne.' });
+    // ROLLBACK GLOBAL (Seulement si l'argent n'a pas encore été 'Commit')
+    if (!isCommitted && connection) {
+      await connection.rollback();
+    }
+    console.error("💥 Erreur Critique Serveur:", error);
+    res.status(500).json({ message: 'Erreur serveur interne inattendue.' });
   } finally {
     if (connection) connection.release();
   }
