@@ -12,35 +12,66 @@ exports.getPromotionsForUser = async (req, res) => {
   const filter = req.query.filter || 'ma_commune';
 
   try {
+    // 1. Récupération des infos utilisateur pour l'âge
     const [userData] = await pool.execute('SELECT date_naissance FROM utilisateurs WHERE id = ?', [userId]);
     if (!userData.length || !userData[0].date_naissance) {
       return res.status(403).json({ message: "Votre profil est incomplet (date de naissance manquante)." });
     }
+    
     const user = userData[0];
     const birthDate = new Date(user.date_naissance);
     const age = new Date(Date.now() - birthDate.getTime()).getUTCFullYear() - 1970;
 
+    // 2. Initialisation du tableau params (C'ÉTAIT L'ERREUR PRINCIPALE)
+    const params = [];
+
+    // 3. Construction de la requête SQL (CORRIGÉE)
+    // J'ai réparé la syntaxe SQL qui était cassée dans votre version
     let query = `
           SELECT 
               p.*, 
               c.nom_utilisateur as client_nom_utilisateur, 
               c.commune as client_commune,
-              pk.remuneration AS remuneration_pack -- << AJOUTEZ CETTE LIGNE
+              pk.remuneration AS remuneration_pack
           FROM promotions p
           JOIN clients c ON p.id_client = c.id
-          JOIN packs pk ON p.id_pack = pk.id -- << AJOUTEZ CETTE JOINTURE
+          JOIN packs pk ON p.id_pack = pk.id
           WHERE p.statut = 'en_cours' 
             AND p.budget_restant > 0
+            
+            -- Filtre sur l'âge (Utilise la variable age calculée en JS)
             AND (
                 p.tranche_age = 'tous'
-              WHERE i.id_utilisateur = ? AND i.id_promotion = p.id AND i.type_interaction IN ('like', 'partage')
-          )
-          ORDER BY p.date_creation DESC
-      `;
+                OR (p.tranche_age = '12-17' AND ? BETWEEN 12 AND 17)
+                OR (p.tranche_age = '18+' AND ? >= 18)
+            )
+    `;
+    
+    // On ajoute l'âge deux fois dans les params pour les deux '?' ci-dessus
+    params.push(age, age);
+
+    // 4. Gestion du filtre Commune (Optionnel selon votre logique)
+    if (filter === 'ma_commune' && userCommune) {
+        query += ` AND (p.ciblage_commune = 'toutes' OR (p.ciblage_commune = 'ma_commune' AND c.commune = ?))`;
+        params.push(userCommune);
+    }
+
+    // 5. Exclusion des promotions déjà vues (Correction de votre bout de code cassé)
+    // On exclut les promotions où l'utilisateur a déjà fait une interaction de type 'vue'
+    query += ` AND NOT EXISTS (
+        SELECT 1 FROM interactions i 
+        WHERE i.id_promotion = p.id 
+        AND i.id_utilisateur = ? 
+        AND i.type_interaction = 'vue'
+    )`;
     params.push(userId);
 
+    query += ` ORDER BY p.date_creation DESC`;
+
+    // Exécution
     const [promotions] = await pool.execute(query, params);
 
+    // Formatage des URLs
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     const promotionsWithUrls = promotions.map(promo => ({
       ...promo,
@@ -596,6 +627,16 @@ exports.withdrawEarnings = async (req, res) => {
         surname: nomContact,
         email: emailContact
       }]));
+
+      try {
+        await axios.post(`https://client.cinetpay.com/v1/transfer/contact?token=${token}&lang=fr`, paramsContact, {
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+        });
+      } catch (contactError) {
+        console.error("Erreur lors de l'ajout du contact CinetPay:", contactError.message);
+        await connection.rollback();
+        return res.status(500).json({ message: "Échec de l'ajout du contact CinetPay. Veuillez réessayer." });
+      }
 
       await axios.post(`https://client.cinetpay.com/v1/transfer/contact?token=${token}&lang=fr`, paramsContact, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
