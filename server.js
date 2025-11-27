@@ -88,9 +88,11 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', (req, res, next) => {
   if (req.path.endsWith('.mp4')) {
     res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Content-Disposition', 'inline');
     res.setHeader('Accept-Ranges', 'bytes');
   } else if (req.path.endsWith('.webm')) {
     res.setHeader('Content-Type', 'video/webm');
+    res.setHeader('Content-Disposition', 'inline');
     res.setHeader('Accept-Ranges', 'bytes');
   }
   next();

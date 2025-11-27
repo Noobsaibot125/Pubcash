@@ -435,10 +435,10 @@ exports.registerUtilisateur = async (req, res) => {
         date_naissance,
         contact,
         genre,
-        code_parrainage // <--- On le définit ici d'abord
+        code_parrainage
     } = req.body;
 
-    console.log('🔍 Code parrainage extrait:', code_parrainage); // <--- Maintenant on peut l'afficher
+    console.log('🔍 Code parrainage extrait:', code_parrainage);
 
     // VALIDATION
     if (!nom_utilisateur || !email || !mot_de_passe || !commune || !date_naissance) {
@@ -447,28 +447,29 @@ exports.registerUtilisateur = async (req, res) => {
         });
     }
 
-    // On utilise une connexion pour la transaction (rollback en cas d'erreur)
     const connection = await pool.getConnection();
 
     try {
         await connection.beginTransaction(); // DÉBUT DE LA TRANSACTION
 
-        // 1. Vérifier si l'email ou le nom d'utilisateur existe déjà
+        // ==================================================================================
+        // 1. Vérifier si l'email, le nom d'utilisateur OU LE CONTACT existe déjà (CORRIGÉ)
+        // ==================================================================================
         const [existingUsers] = await connection.execute(
-            'SELECT id FROM utilisateurs WHERE email = ? OR nom_utilisateur = ?',
-            [email, nom_utilisateur]
+            'SELECT id FROM utilisateurs WHERE email = ? OR nom_utilisateur = ? OR contact = ?',
+            [email, nom_utilisateur, contact]
         );
 
         if (existingUsers.length > 0) {
             await connection.rollback();
-            return res.status(409).json({ message: 'Email ou nom d\'utilisateur déjà utilisé.' });
+            // Message d'erreur mis à jour pour informer l'utilisateur
+            return res.status(409).json({ message: 'Email, nom d\'utilisateur ou numéro de téléphone déjà utilisé.' });
         }
 
         // 2. LOGIQUE DE PARRAINAGE
         let parrainId = null;
 
         if (code_parrainage && code_parrainage.trim() !== '') {
-            // Chercher le parrain
             const [parrains] = await connection.execute(
                 'SELECT id FROM utilisateurs WHERE code_parrainage = ?',
                 [code_parrainage]
@@ -479,8 +480,7 @@ exports.registerUtilisateur = async (req, res) => {
 
                 // A. Donner 30 points au parrain
                 await connection.execute(
-                  // Utilisation de COALESCE pour transformer NULL en 0 si nécessaire
-'UPDATE utilisateurs SET points = COALESCE(points, 0) + 30 WHERE id = ?',
+                    'UPDATE utilisateurs SET points = COALESCE(points, 0) + 30 WHERE id = ?',
                     [parrainId]
                 );
 
@@ -502,26 +502,27 @@ exports.registerUtilisateur = async (req, res) => {
         }
         const myCode = generateReferralCode(nom_utilisateur);
 
-// 4. Insertion de l'utilisateur (AVEC parrain_id ET code_parrainage)
-const [result] = await connection.execute(
-    `INSERT INTO utilisateurs 
-    (nom_utilisateur, email, mot_de_passe, ville, commune_choisie, est_actif,
-    date_naissance, contact, genre, parrain_id, code_parrainage, date_inscription, created_at, updated_at) 
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())`, 
-    [
-        nom_utilisateur,
-        email,
-        hashedPassword,
-        ville || '',
-        commune,
-        true,
-        formattedDate,
-        contact || null,
-        genre || null,
-        parrainId,    // Correspond à l'avant-dernier ?
-        myCode        // Correspond au dernier ? (C'est ce qui manquait !)
-    ]
-);
+        // 4. Insertion de l'utilisateur
+        const [result] = await connection.execute(
+            `INSERT INTO utilisateurs 
+            (nom_utilisateur, email, mot_de_passe, ville, commune_choisie, est_actif,
+            date_naissance, contact, genre, parrain_id, code_parrainage, date_inscription, created_at, updated_at) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())`, 
+            [
+                nom_utilisateur,
+                email,
+                hashedPassword,
+                ville || '',
+                commune,
+                true,
+                formattedDate,
+                contact || null,
+                genre || null,
+                parrainId,    
+                myCode        
+            ]
+        );
+
         await connection.commit(); // VALIDATION DE LA TRANSACTION
 
         console.log('✅ Utilisateur créé avec ID:', result.insertId);
@@ -534,7 +535,6 @@ const [result] = await connection.execute(
         await connection.rollback(); // ANNULATION SI ERREUR
         console.error('❌ Erreur registerUtilisateur:', error);
         
-        // Gestion des erreurs
         if (error.code === 'ER_TRUNCATED_WRONG_VALUE') {
             return res.status(400).json({ message: 'Format de date invalide.' });
         }
