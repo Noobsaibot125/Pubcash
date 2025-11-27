@@ -670,15 +670,29 @@ exports.completeFacebookProfile = async (req, res) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         const userId = decoded.id;
 
-        // MODIFICATION : R├⌐cup├⌐rer 'genre' et 'contact'
         const { commune_choisie, date_naissance, contact, genre } = req.body;
 
-        // MODIFICATION : Validation
+        // 1. Validation des champs
         if (!commune_choisie || !date_naissance || !contact || !genre) {
             return res.status(400).json({ message: 'Commune, date de naissance, contact et genre sont requis.' });
         }
 
-        // MODIFICATION : Mettre ├á jour la BDD
+        // =================================================================
+        // 2. NOUVEAU : VÉRIFICATION DU DOUBLON DE NUMÉRO (CONTACT)
+        // =================================================================
+        // On cherche si un AUTRE utilisateur (id != userId) possède déjà ce numéro
+        const [existingUser] = await pool.execute(
+            'SELECT id FROM utilisateurs WHERE contact = ? AND id != ?',
+            [contact, userId]
+        );
+
+        if (existingUser.length > 0) {
+            // C'est ici qu'on bloque l'inscription comme dans registerUtilisateur
+            return res.status(409).json({ message: 'Ce numéro de téléphone est déjà utilisé par un autre compte.' });
+        }
+        // =================================================================
+
+        // 3. Mise à jour de la BDD (Si le numéro est libre)
         await pool.execute(
             'UPDATE utilisateurs SET commune_choisie = ?, date_naissance = ?, contact = ?, genre = ? WHERE id = ?',
             [commune_choisie, date_naissance, contact, genre, userId]
@@ -688,7 +702,7 @@ exports.completeFacebookProfile = async (req, res) => {
         const [rows] = await pool.execute('SELECT * FROM utilisateurs WHERE id = ?', [userId]);
         const user = rows[0];
 
-        // Nouvelle token (optionnel) pour rafra├«chir payload si tu stockes la commune dedans
+        // Générer un nouveau token (optionnel)
         const payload = {
             id: user.id,
             email: user.email,
@@ -698,7 +712,7 @@ exports.completeFacebookProfile = async (req, res) => {
         const newToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '8h' });
 
         res.status(200).json({
-            message: 'Profil mis ├á jour.',
+            message: 'Profil mis à jour.',
             token: newToken,
             user: {
                 id: user.id,
@@ -707,7 +721,7 @@ exports.completeFacebookProfile = async (req, res) => {
                 commune_choisie: user.commune_choisie,
                 date_naissance: user.date_naissance,
                 contact: user.contact,
-                genre: user.genre // AJOUT : Renvoyer le genre
+                genre: user.genre
             }
         });
 
