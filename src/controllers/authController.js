@@ -5,6 +5,13 @@ const pool = require('../config/db');
 const nodemailer = require('nodemailer');
 const axios = require('axios');
 //Inscription pour les Superadmin
+// 1. Fonction utilitaire pour créer le code (ne touche pas à la BDD)
+const generateReferralCode = (nom) => {
+    const prefix = (nom && nom.length >= 3) ? nom.substring(0, 3).toUpperCase() : 'PUB';
+    const cleanPrefix = prefix.replace(/[^A-Z]/g, 'X');
+    const random = Math.floor(1000 + Math.random() * 9000);
+    return `${cleanPrefix}${random}`;
+};
 exports.registerAdmin = async (req, res) => {
     const { nom_utilisateur, email, mot_de_passe, invitationCode } = req.body;
 
@@ -168,10 +175,26 @@ exports.registerClient = async (req, res) => {
     }
 };
 // --- NOUVELLE FONCTION UTILITAIRE POUR G├ëN├ëRER LES TOKENS ---
-// (Pour ├⌐viter la duplication de code)
+
+
+// 2. MODIFICATION DE LA FONCTION DE GÉNÉRATION DE TOKENS
+// C'est ici que la magie opère : on vérifie si le code existe avant d'en créer un.
 const generateAndStoreTokens = async (res, user, userTable, role) => {
-    // Le r├┤le est soit pass├⌐ en argument (pour utilisateur), soit pris de la BDD
     const userRole = role || user.role;
+    let finalCodeParrainage = user.code_parrainage;
+
+    // A. Si c'est un utilisateur et qu'il n'a pas de code (anciens comptes), on en crée un
+    if (userTable === 'utilisateurs') {
+        if (!finalCodeParrainage) {
+            finalCodeParrainage = generateReferralCode(user.nom_utilisateur);
+            // On le sauvegarde en base
+            await pool.execute(
+                'UPDATE utilisateurs SET code_parrainage = ? WHERE id = ?',
+                [finalCodeParrainage, user.id]
+            );
+        }
+    }
+
     const payload = { id: user.id, email: user.email, role: userRole };
 
     const accessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRATION || '15m' });
@@ -180,7 +203,6 @@ const generateAndStoreTokens = async (res, user, userTable, role) => {
     // Stocker le refresh token
     await pool.execute(`UPDATE ${userTable} SET refresh_token = ? WHERE id = ?`, [refreshToken, user.id]);
 
-    // Mettre ├á jour le statut 'en ligne' pour les utilisateurs
     if (userTable === 'utilisateurs') {
         await pool.execute(
             'UPDATE utilisateurs SET est_en_ligne = ?, derniere_connexion = NOW() WHERE id = ?',
@@ -188,11 +210,18 @@ const generateAndStoreTokens = async (res, user, userTable, role) => {
         );
     }
 
+    // B. ENVOI DE LA RÉPONSE AVEC LE CODE
     res.status(200).json({
         accessToken,
         refreshToken,
         role: userRole,
-        user: { id: user.id, email: user.email }
+        user: { 
+            id: user.id, 
+            email: user.email,
+            nom_utilisateur: user.nom_utilisateur, // Ajout utile
+            photo_profil: user.photo_profil,       // Ajout utile
+            code_parrainage: finalCodeParrainage   // <--- C'EST CA QUI MANQUAIT !
+        }
     });
 };
 // --- NOUVELLE FONCTION POUR V├ëRIFIER L'OTP ---
@@ -471,27 +500,28 @@ exports.registerUtilisateur = async (req, res) => {
             const parts = date_naissance.split('/');
             formattedDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
         }
+        const myCode = generateReferralCode(nom_utilisateur);
 
-        // 4. Insertion de l'utilisateur (AVEC parrain_id)
-        const [result] = await connection.execute(
-            `INSERT INTO utilisateurs 
-            (nom_utilisateur, email, mot_de_passe, ville, commune_choisie, est_actif,
-            date_naissance, contact, genre, parrain_id, date_inscription, created_at, updated_at) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())`,
-            [
-                nom_utilisateur,
-                email,
-                hashedPassword,
-                ville || '',
-                commune,
-                true,
-                formattedDate,
-                contact || null,
-                genre || null,
-                parrainId // <--- ON ENREGISTRE L'ID DU PARRAIN ICI
-            ]
-        );
-
+// 4. Insertion de l'utilisateur (AVEC parrain_id ET code_parrainage)
+const [result] = await connection.execute(
+    `INSERT INTO utilisateurs 
+    (nom_utilisateur, email, mot_de_passe, ville, commune_choisie, est_actif,
+    date_naissance, contact, genre, parrain_id, code_parrainage, date_inscription, created_at, updated_at) 
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())`, 
+    [
+        nom_utilisateur,
+        email,
+        hashedPassword,
+        ville || '',
+        commune,
+        true,
+        formattedDate,
+        contact || null,
+        genre || null,
+        parrainId,    // Correspond à l'avant-dernier ?
+        myCode        // Correspond au dernier ? (C'est ce qui manquait !)
+    ]
+);
         await connection.commit(); // VALIDATION DE LA TRANSACTION
 
         console.log('✅ Utilisateur créé avec ID:', result.insertId);

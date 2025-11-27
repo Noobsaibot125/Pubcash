@@ -887,3 +887,44 @@ const notifyClientOfFinishedPromotion = async (promotionId, connection, req) => 
     console.error("Échec de la tentative d'envoi de l'e-mail de fin de promotion:", error);
   }
 };
+
+exports.getPromotionById = async (req, res) => {
+  const { promotionId } = req.params;
+
+  try {
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+
+    // On récupère la promo avec les infos du client et du pack
+    const [rows] = await pool.execute(
+      `SELECT p.*, c.nom as client_nom, pk.nom_pack 
+       FROM promotions p
+       JOIN clients c ON p.id_client = c.id
+       JOIN packs pk ON p.id_pack = pk.id
+       WHERE p.id = ?`,
+      [promotionId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'Promotion non trouvée' });
+    }
+
+    const promo = rows[0];
+
+    // On formate les URLs comme dans les autres fonctions
+    const promoWithUrls = {
+      ...promo,
+      url_video: promo.url_video && !promo.url_video.startsWith('http')
+        ? `${baseUrl}/uploads/videos/${promo.url_video}`
+        : promo.url_video,
+      thumbnail_url: promo.thumbnail_url && !promo.thumbnail_url.startsWith('http')
+        ? `${baseUrl}/uploads/thumbnails/${promo.thumbnail_url}`
+        : promo.thumbnail_url
+    };
+
+    res.status(200).json(promoWithUrls);
+
+  } catch (error) {
+    console.error("Erreur getPromotionById:", error);
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
+};

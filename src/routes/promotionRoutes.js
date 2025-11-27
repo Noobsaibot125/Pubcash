@@ -39,4 +39,8 @@ router.post('/:promotionId/comment', protect, promotionController.addComment);
 // POST /api/promotions/:promotionId/view
 router.post('/:promotionId/view', protect, promotionController.viewPromotion);
 
+// --- ROUTE PUBLIQUE (Doit être en dernier pour ne pas confisquer les autres routes comme /historique) ---
+// GET /api/promotions/:promotionId
+router.get('/:promotionId', promotionController.getPromotionById);
+
 module.exports = router;
