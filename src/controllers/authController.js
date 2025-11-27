@@ -17,7 +17,7 @@ exports.registerAdmin = async (req, res) => {
     if (!nom_utilisateur || !email || !mot_de_passe) {
         return res.status(400).json({ message: 'Tous les champs (sauf le code) sont requis.' });
     }
-        
+
     try {
         // ├ëtape 3 : Hacher le mot de passe et ins├⌐rer dans la BDD
         const hashedPassword = await bcrypt.hash(mot_de_passe, 10);
@@ -38,31 +38,31 @@ exports.registerAdmin = async (req, res) => {
 // --- FONCTION UTILITAIRE POUR L'ENVOI D'EMAIL ---
 const sendOtpEmail = async (email, otp) => {
     let transporter = nodemailer.createTransport({
-      host: process.env.EMAIL_HOST,
-      port: process.env.EMAIL_PORT,
-      secure: false, // true for 465, false for other ports
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
+        host: process.env.EMAIL_HOST,
+        port: process.env.EMAIL_PORT,
+        secure: false, // true for 465, false for other ports
+        auth: {
+            user: process.env.EMAIL_USER,
+            pass: process.env.EMAIL_PASS,
+        },
     });
-  
+
     await transporter.sendMail({
-      from: `"PubCash" <${process.env.EMAIL_USER}>`,
-      to: email,
-      subject: "Votre code de verification PubCash",
-      text: `Votre code de verification est : ${otp}`,
-      html: `<b>Votre code de verification est : ${otp}</b><p>Ce code expirera dans 10 minutes.</p>`,
+        from: `"PubCash" <${process.env.EMAIL_USER}>`,
+        to: email,
+        subject: "Votre code de verification PubCash",
+        text: `Votre code de verification est : ${otp}`,
+        html: `<b>Votre code de verification est : ${otp}</b><p>Ce code expirera dans 10 minutes.</p>`,
     });
-  };
-  
-  
-  // --- FONCTION REGISTERCLIENT MISE ├Ç JOUR ---
-  const checkEmailExists = async (email) => {
+};
+
+
+// --- FONCTION REGISTERCLIENT MISE ├Ç JOUR ---
+const checkEmailExists = async (email) => {
     const [admins] = await pool.execute('SELECT id FROM administrateurs WHERE email = ?', [email]);
     const [clients] = await pool.execute('SELECT id FROM clients WHERE email = ?', [email]);
     const [users] = await pool.execute('SELECT id FROM utilisateurs WHERE email = ?', [email]);
-    
+
     return admins.length > 0 || clients.length > 0 || users.length > 0;
 };
 
@@ -71,9 +71,9 @@ exports.registerClient = async (req, res) => {
     console.log("📥 Données reçues:", req.body); // Pour voir ce que React envoie
 
     // 1. On récupère TOUS les champs, y compris les nouveaux pour l'entreprise
-    const { 
-        nom, prenom, nom_utilisateur, email, mot_de_passe, 
-        telephone, commune, genre, type_compte, nom_entreprise, rccm 
+    const {
+        nom, prenom, nom_utilisateur, email, mot_de_passe,
+        telephone, commune, genre, type_compte, nom_entreprise, rccm
     } = req.body;
 
     // 2. Validation des champs COMMUNS (ceux que tout le monde doit avoir)
@@ -111,10 +111,10 @@ exports.registerClient = async (req, res) => {
         // 6. Préparation des données pour SQL (Gestion des NULL)
         const finalNom = isEntreprise ? null : nom;
         const finalPrenom = isEntreprise ? null : prenom;
-        
+
         // Astuce : On utilise le nom de l'entreprise comme pseudo interne si c'est une entreprise (pour éviter les doublons vides)
         const finalNomUtilisateur = isEntreprise ? nom_entreprise.replace(/\s+/g, '_').toLowerCase() : nom_utilisateur;
-        
+
         const finalNomEntreprise = isEntreprise ? nom_entreprise : null;
         const finalRccm = isEntreprise ? rccm : null;
         const finalGenre = isEntreprise ? null : genre;
@@ -127,18 +127,18 @@ exports.registerClient = async (req, res) => {
                 otp_code, otp_expiration, type_compte, nom_entreprise, rccm, est_verifie, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
             [
-                finalNom, 
-                finalPrenom, 
-                finalNomUtilisateur, 
-                email, 
-                telephone, 
-                hashedPassword, 
-                commune, 
-                finalGenre || null, 
-                otp, 
-                otpExpiration, 
-                finalTypeCompte, 
-                finalNomEntreprise, 
+                finalNom,
+                finalPrenom,
+                finalNomUtilisateur,
+                email,
+                telephone,
+                hashedPassword,
+                commune,
+                finalGenre || null,
+                otp,
+                otpExpiration,
+                finalTypeCompte,
+                finalNomEntreprise,
                 finalRccm,
                 false // Important : on met est_verifie à false par défaut
             ]
@@ -146,57 +146,57 @@ exports.registerClient = async (req, res) => {
 
         // 8. Envoi email
         await sendOtpEmail(email, otp);
-        
-        res.status(201).json({ 
-            message: 'Inscription réussie. Veuillez vérifier votre email.', 
+
+        res.status(201).json({
+            message: 'Inscription réussie. Veuillez vérifier votre email.',
             clientId: result.insertId,
-            email 
+            email
         });
 
     } catch (error) {
         console.error("❌ Erreur registerClient:", error);
-        
+
         if (error.code === 'ER_DUP_ENTRY') {
             return res.status(409).json({ message: 'Cet email, téléphone ou nom d\'utilisateur est déjà utilisé.' });
         }
         // Gestion de l'erreur si vous avez oublié de mettre à jour la BDD
         if (error.code === 'ER_BAD_FIELD_ERROR') {
-             return res.status(500).json({ message: 'Erreur technique : Colonnes manquantes dans la base de données (type_compte, nom_entreprise, etc.)' });
+            return res.status(500).json({ message: 'Erreur technique : Colonnes manquantes dans la base de données (type_compte, nom_entreprise, etc.)' });
         }
-        
+
         res.status(500).json({ message: 'Erreur serveur lors de l\'inscription.' });
     }
 };
 // --- NOUVELLE FONCTION UTILITAIRE POUR G├ëN├ëRER LES TOKENS ---
 // (Pour ├⌐viter la duplication de code)
 const generateAndStoreTokens = async (res, user, userTable, role) => {
-  // Le r├┤le est soit pass├⌐ en argument (pour utilisateur), soit pris de la BDD
-  const userRole = role || user.role;
-  const payload = { id: user.id, email: user.email, role: userRole };
+    // Le r├┤le est soit pass├⌐ en argument (pour utilisateur), soit pris de la BDD
+    const userRole = role || user.role;
+    const payload = { id: user.id, email: user.email, role: userRole };
 
-  const accessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRATION || '15m' });
-  const refreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.REFRESH_TOKEN_EXPIRATION || '7d' });
+    const accessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRATION || '15m' });
+    const refreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.REFRESH_TOKEN_EXPIRATION || '7d' });
 
-  // Stocker le refresh token
-  await pool.execute(`UPDATE ${userTable} SET refresh_token = ? WHERE id = ?`, [refreshToken, user.id]);
+    // Stocker le refresh token
+    await pool.execute(`UPDATE ${userTable} SET refresh_token = ? WHERE id = ?`, [refreshToken, user.id]);
 
-  // Mettre ├á jour le statut 'en ligne' pour les utilisateurs
-  if (userTable === 'utilisateurs') {
-      await pool.execute(
-          'UPDATE utilisateurs SET est_en_ligne = ?, derniere_connexion = NOW() WHERE id = ?',
-          [true, user.id]
-      );
-  }
+    // Mettre ├á jour le statut 'en ligne' pour les utilisateurs
+    if (userTable === 'utilisateurs') {
+        await pool.execute(
+            'UPDATE utilisateurs SET est_en_ligne = ?, derniere_connexion = NOW() WHERE id = ?',
+            [true, user.id]
+        );
+    }
 
-  res.status(200).json({
-      accessToken,
-      refreshToken,
-      role: userRole,
-      user: { id: user.id, email: user.email }
-  });
+    res.status(200).json({
+        accessToken,
+        refreshToken,
+        role: userRole,
+        user: { id: user.id, email: user.email }
+    });
 };
-  // --- NOUVELLE FONCTION POUR V├ëRIFIER L'OTP ---
-  exports.verifyOtp = async (req, res) => {
+// --- NOUVELLE FONCTION POUR V├ëRIFIER L'OTP ---
+exports.verifyOtp = async (req, res) => {
     const { email, otp } = req.body;
     try {
         const [rows] = await pool.execute('SELECT * FROM clients WHERE email = ?', [email]);
@@ -214,399 +214,489 @@ const generateAndStoreTokens = async (res, user, userTable, role) => {
 
         // CORRECTION : Supprimer la deuxi├¿me r├⌐ponse inutile
         res.status(200).json({ message: "Compte v├⌐rifi├⌐ avec succ├¿s ! Vous pouvez maintenant vous connecter." });
-        
+
     } catch (error) {
         console.error("Erreur verifyOtp:", error);
         res.status(500).json({ message: 'Erreur serveur' });
     }
 };
-  
-  
+
+
 // --- NOUVELLE FONCTION : LOGIN ADMIN ---
 exports.loginAdmin = async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ message: 'Email et mot de passe requis.' });
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ message: 'Email et mot de passe requis.' });
 
-  try {
-      const [rows] = await pool.execute('SELECT * FROM administrateurs WHERE email = ?', [email]);
-      const user = rows[0];
+    try {
+        const [rows] = await pool.execute('SELECT * FROM administrateurs WHERE email = ?', [email]);
+        const user = rows[0];
 
-      if (!user) return res.status(401).json({ message: 'Email ou mot de passe incorrect.' });
+        if (!user) return res.status(401).json({ message: 'Email ou mot de passe incorrect.' });
 
-      const isMatch = await bcrypt.compare(password, user.mot_de_passe);
-      if (!isMatch) return res.status(401).json({ message: 'Email ou mot de passe incorrect.' });
+        const isMatch = await bcrypt.compare(password, user.mot_de_passe);
+        if (!isMatch) return res.status(401).json({ message: 'Email ou mot de passe incorrect.' });
 
-      // (user.role est d├⌐j├á 'superadmin' ou 'admin' dans la BDD)
-      await generateAndStoreTokens(res, user, 'administrateurs');
+        // (user.role est d├⌐j├á 'superadmin' ou 'admin' dans la BDD)
+        await generateAndStoreTokens(res, user, 'administrateurs');
 
-  } catch (error) {
-      console.error("--- ERREUR DANS loginAdmin ---", error);
-      res.status(500).json({ message: 'Erreur serveur' });
-  }
+    } catch (error) {
+        console.error("--- ERREUR DANS loginAdmin ---", error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
 };
 
 // --- NOUVELLE FONCTION : LOGIN CLIENT ---
 exports.loginClient = async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ message: 'Email et mot de passe requis.' });
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ message: 'Email et mot de passe requis.' });
 
-  try {
-      const [rows] = await pool.execute('SELECT * FROM clients WHERE email = ?', [email]);
-      const user = rows[0];
+    try {
+        const [rows] = await pool.execute('SELECT * FROM clients WHERE email = ?', [email]);
+        const user = rows[0];
 
-      if (!user) return res.status(401).json({ message: 'Email ou mot de passe incorrect.' });
+        if (!user) return res.status(401).json({ message: 'Email ou mot de passe incorrect.' });
 
-      // V├⌐rification cruciale pour les clients
-      if (!user.est_verifie) {
-          return res.status(403).json({ message: 'Votre compte n\'est pas v├⌐rifi├⌐.' });
-      }
+        // V├⌐rification cruciale pour les clients
+        if (!user.est_verifie) {
+            return res.status(403).json({ message: 'Votre compte n\'est pas v├⌐rifi├⌐.' });
+        }
 
-      const isMatch = await bcrypt.compare(password, user.mot_de_passe);
-      if (!isMatch) return res.status(401).json({ message: 'Email ou mot de passe incorrect.' });
+        const isMatch = await bcrypt.compare(password, user.mot_de_passe);
+        if (!isMatch) return res.status(401).json({ message: 'Email ou mot de passe incorrect.' });
 
-      // (user.role est 'client' par d├⌐faut dans la BDD)
-      await generateAndStoreTokens(res, user, 'clients');
+        // (user.role est 'client' par d├⌐faut dans la BDD)
+        await generateAndStoreTokens(res, user, 'clients');
 
-  } catch (error) {
-      console.error("--- ERREUR DANS loginClient ---", error);
-      res.status(500).json({ message: 'Erreur serveur' });
-  }
+    } catch (error) {
+        console.error("--- ERREUR DANS loginClient ---", error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+};
+
+// --- HELPER: GESTION DU BONUS DE CONNEXION QUOTIDIENNE ---
+const handleDailyLogin = async (userId) => {
+    const today = new Date().toISOString().split('T')[0];
+    const yesterdayDate = new Date();
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+    const yesterday = yesterdayDate.toISOString().split('T')[0];
+
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        // 1. Vérifier si déjà connecté aujourd'hui
+        const [todayActivity] = await connection.execute(
+            'SELECT id FROM daily_activity WHERE user_id = ? AND date = ?',
+            [userId, today]
+        );
+
+        if (todayActivity.length > 0) {
+            await connection.rollback();
+            return; // Déjà traité pour aujourd'hui
+        }
+
+        // 2. Vérifier le streak d'hier
+        const [yesterdayActivity] = await connection.execute(
+            'SELECT login_streak FROM daily_activity WHERE user_id = ? AND date = ?',
+            [userId, yesterday]
+        );
+
+        let currentStreak = 1;
+        if (yesterdayActivity.length > 0) {
+            const lastStreak = yesterdayActivity[0].login_streak;
+            // Si le streak était 7 hier, on repart à 1 aujourd'hui. Sinon on incrémente.
+            // Note: Si on veut que le cycle soit 1..7, 1..7.
+            // Si hier = 7, (7 % 7) + 1 = 1.
+            // Si hier = 1, (1 % 7) + 1 = 2.
+            currentStreak = (lastStreak % 7) + 1;
+        }
+
+        // 3. Insérer l'activité du jour
+        await connection.execute(
+            'INSERT INTO daily_activity (user_id, date, login_streak) VALUES (?, ?, ?)',
+            [userId, today, currentStreak]
+        );
+
+        // 4. Donner les points si streak atteint 7
+        if (currentStreak === 7) {
+            await connection.execute(
+                'UPDATE utilisateurs SET points = points + 10 WHERE id = ?',
+                [userId]
+            );
+            // Historique
+            await connection.execute(
+                'INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, ?, ?, NOW())',
+                [userId, 10, 'gagne']
+            );
+        }
+
+        await connection.commit();
+    } catch (error) {
+        await connection.rollback();
+        console.error('Erreur handleDailyLogin:', error);
+    } finally {
+        connection.release();
+    }
 };
 
 // --- NOUVELLE FONCTION : LOGIN UTILISATEUR (avec Email ou Contact) ---
 exports.loginUtilisateur = async (req, res) => {
-  // AJOUT : on r├⌐cup├¿re push_notification
-  const { identifier, password, push_notification } = req.body;
-  
-  if (!identifier || !password) return res.status(400).json({ message: 'Identifiant et mot de passe requis.' });
+    // AJOUT : on r├⌐cup├¿re push_notification
+    const { identifier, password, push_notification } = req.body;
 
-  try {
-      const [rows] = await pool.execute(
-          'SELECT * FROM utilisateurs WHERE email = ? OR contact = ?', 
-          [identifier, identifier]
-      );
-      const user = rows[0];
+    if (!identifier || !password) return res.status(400).json({ message: 'Identifiant et mot de passe requis.' });
 
-      if (!user) return res.status(401).json({ message: 'Identifiant ou mot de passe incorrect.' });
+    try {
+        const [rows] = await pool.execute(
+            'SELECT * FROM utilisateurs WHERE email = ? OR contact = ?',
+            [identifier, identifier]
+        );
+        const user = rows[0];
 
-      // G├⌐rer les comptes Facebook sans mot de passe
-      if (!user.mot_de_passe && user.id_facebook) {
-           return res.status(401).json({ message: 'Ce compte est li├⌐ ├á Facebook. Veuillez vous connecter avec Facebook.' });
-      }
-      if (!user.mot_de_passe) {
-           return res.status(401).json({ message: 'Identifiant ou mot de passe incorrect.' });
-      }
+        if (!user) return res.status(401).json({ message: 'Identifiant ou mot de passe incorrect.' });
 
-      if (!user.est_actif) {
-          return res.status(403).json({ message: 'Votre compte a ├⌐t├⌐ d├⌐sactiv├⌐. Veuillez contacter le support.' });
-      }
+        // G├⌐rer les comptes Facebook sans mot de passe
+        if (!user.mot_de_passe && user.id_facebook) {
+            return res.status(401).json({ message: 'Ce compte est li├⌐ ├á Facebook. Veuillez vous connecter avec Facebook.' });
+        }
+        if (!user.mot_de_passe) {
+            return res.status(401).json({ message: 'Identifiant ou mot de passe incorrect.' });
+        }
 
-      const isMatch = await bcrypt.compare(password, user.mot_de_passe);
-      if (!isMatch) return res.status(401).json({ message: 'Identifiant ou mot de passe incorrect.' });
+        if (!user.est_actif) {
+            return res.status(403).json({ message: 'Votre compte a ├⌐t├⌐ d├⌐sactiv├⌐. Veuillez contacter le support.' });
+        }
 
-      // =================================================================
-      // <-- NOUVEAU : ENREGISTREMENT DU TOKEN PUSH
-      // =================================================================
-      if (push_notification) {
-          // On met ├á jour le token push de l'utilisateur
-          await pool.execute(
-              'UPDATE utilisateurs SET push_notification = ? WHERE id = ?',
-              [push_notification, user.id]
-          );
-      }
-      // =================================================================
+        const isMatch = await bcrypt.compare(password, user.mot_de_passe);
+        if (!isMatch) return res.status(401).json({ message: 'Identifiant ou mot de passe incorrect.' });
 
-      await generateAndStoreTokens(res, user, 'utilisateurs', 'utilisateur');
+        // =================================================================
+        // <-- NOUVEAU : ENREGISTREMENT DU TOKEN PUSH
+        // =================================================================
+        if (push_notification) {
+            // On met ├á jour le token push de l'utilisateur
+            await pool.execute(
+                'UPDATE utilisateurs SET push_notification = ? WHERE id = ?',
+                [push_notification, user.id]
+            );
+        }
+        // =================================================================
 
-  } catch (error) {
-      console.error("--- ERREUR DANS loginUtilisateur ---", error);
-      res.status(500).json({ message: 'Erreur serveur' });
-  }
+        // =================================================================
+
+        // GESTION DU BONUS DE CONNEXION
+        await handleDailyLogin(user.id);
+
+        await generateAndStoreTokens(res, user, 'utilisateurs', 'utilisateur');
+
+    } catch (error) {
+        console.error("--- ERREUR DANS loginUtilisateur ---", error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
 };
 exports.registerUtilisateur = async (req, res) => {
-  console.log('≡ƒô¿ Donn├⌐es re├ºues registerUtilisateur:', req.body);
+    console.log('📨 Données reçues registerUtilisateur:', req.body);
 
-  const {
-    nom_utilisateur,
-    email,
-    mot_de_passe,
-    ville,
-    commune,
-    date_naissance,
-    contact,
-    genre // AJOUT DE 'genre'
-  } = req.body;
-
-  // VALIDATION STRICTE selon le message d'erreur
-  if (!nom_utilisateur || !email || !mot_de_passe || !commune || !date_naissance) {
-    console.log('Γ¥î Champs manquants:', {
-      nom_utilisateur: !nom_utilisateur,
-      email: !email,
-      mot_de_passe: !mot_de_passe,
-      commune: !commune,
-      date_naissance: !date_naissance
-    });
-    return res.status(400).json({
-      message: 'Nom, email, mot de passe, commune et date de naissance sont obligatoires.'
-    });
-  }
-
-  try {
-    // V├⌐rifier si l'email existe d├⌐j├á
-    const emailExists = await checkEmailExists(email);
-    if (emailExists) {
-      return res.status(409).json({ message: 'Cet email est d├⌐j├á utilis├⌐.' });
-    }
-
-    const hashedPassword = await bcrypt.hash(mot_de_passe, 10);
-    
-    // FORMATAGE DE LA DATE
-    let formattedDate = date_naissance;
-    if (date_naissance.includes('/')) {
-      const parts = date_naissance.split('/');
-      formattedDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
-    }
-
-    console.log('Γ£à Donn├⌐es pr├¬tes pour insertion:', {
-      nom_utilisateur,
-      email,
-      ville: ville || '',
-      commune,
-      date_naissance: formattedDate,
-      contact: contact || null,
-      genre: genre || null // Ajout pour log
-    });
-
-    // INSERTION avec tous les champs n├⌐cessaires
-    // INSERTION avec 'genre'
-    const [result] = await pool.execute(
-      `INSERT INTO utilisateurs 
-       (nom_utilisateur, email, mot_de_passe, ville, commune_choisie, est_actif,
-        date_naissance, contact, genre, date_inscription, created_at, updated_at) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())`,
-       [
+    const {
         nom_utilisateur,
         email,
-        hashedPassword,
-        ville || '',
+        mot_de_passe,
+        ville,
         commune,
-        true,
-        formattedDate,
-        contact || null,
-        genre || null // AJOUT DE 'genre'
-      ]
-    );
+        date_naissance,
+        contact,
+        genre,
+        code_parrainage // <--- On le définit ici d'abord
+    } = req.body;
 
-    console.log('Γ£à Utilisateur cr├⌐├⌐ avec ID:', result.insertId);
-    res.status(201).json({ 
-      message: 'Utilisateur inscrit avec succ├¿s !',
-      userId: result.insertId 
-    });
+    console.log('🔍 Code parrainage extrait:', code_parrainage); // <--- Maintenant on peut l'afficher
 
-  } catch (error) {
-    console.error('Γ¥î Erreur registerUtilisateur:', error);
-    
-    if (error.code === 'ER_DUP_ENTRY') {
-      if (error.sqlMessage.includes('email')) {
-        return res.status(409).json({ message: 'Cet email est d├⌐j├á utilis├⌐.' });
-      }
-      if (error.sqlMessage.includes('nom_utilisateur')) {
-        return res.status(409).json({ message: 'Ce nom d\'utilisateur est d├⌐j├á utilis├⌐.' });
-      }
-      return res.status(409).json({ message: 'Nom d\'utilisateur ou email d├⌐j├á utilis├⌐.' });
+    // VALIDATION
+    if (!nom_utilisateur || !email || !mot_de_passe || !commune || !date_naissance) {
+        return res.status(400).json({
+            message: 'Nom, email, mot de passe, commune et date de naissance sont obligatoires.'
+        });
     }
-    
-    if (error.code === 'ER_TRUNCATED_WRONG_VALUE') {
-      return res.status(400).json({ message: 'Format de date invalide.' });
+
+    // On utilise une connexion pour la transaction (rollback en cas d'erreur)
+    const connection = await pool.getConnection();
+
+    try {
+        await connection.beginTransaction(); // DÉBUT DE LA TRANSACTION
+
+        // 1. Vérifier si l'email ou le nom d'utilisateur existe déjà
+        const [existingUsers] = await connection.execute(
+            'SELECT id FROM utilisateurs WHERE email = ? OR nom_utilisateur = ?',
+            [email, nom_utilisateur]
+        );
+
+        if (existingUsers.length > 0) {
+            await connection.rollback();
+            return res.status(409).json({ message: 'Email ou nom d\'utilisateur déjà utilisé.' });
+        }
+
+        // 2. LOGIQUE DE PARRAINAGE
+        let parrainId = null;
+
+        if (code_parrainage && code_parrainage.trim() !== '') {
+            // Chercher le parrain
+            const [parrains] = await connection.execute(
+                'SELECT id FROM utilisateurs WHERE code_parrainage = ?',
+                [code_parrainage]
+            );
+
+            if (parrains.length > 0) {
+                parrainId = parrains[0].id;
+
+                // A. Donner 30 points au parrain
+                await connection.execute(
+                  // Utilisation de COALESCE pour transformer NULL en 0 si nécessaire
+'UPDATE utilisateurs SET points = COALESCE(points, 0) + 30 WHERE id = ?',
+                    [parrainId]
+                );
+
+                // B. Créer l'historique de gain pour le parrain
+                await connection.execute(
+                    'INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, ?, ?, NOW())',
+                    [parrainId, 30, 'bonus_parrainage_inscription']
+                );
+            }
+        }
+
+        // 3. Hashage et Formatage
+        const hashedPassword = await bcrypt.hash(mot_de_passe, 10);
+        
+        let formattedDate = date_naissance;
+        if (date_naissance.includes('/')) {
+            const parts = date_naissance.split('/');
+            formattedDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+        }
+
+        // 4. Insertion de l'utilisateur (AVEC parrain_id)
+        const [result] = await connection.execute(
+            `INSERT INTO utilisateurs 
+            (nom_utilisateur, email, mot_de_passe, ville, commune_choisie, est_actif,
+            date_naissance, contact, genre, parrain_id, date_inscription, created_at, updated_at) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())`,
+            [
+                nom_utilisateur,
+                email,
+                hashedPassword,
+                ville || '',
+                commune,
+                true,
+                formattedDate,
+                contact || null,
+                genre || null,
+                parrainId // <--- ON ENREGISTRE L'ID DU PARRAIN ICI
+            ]
+        );
+
+        await connection.commit(); // VALIDATION DE LA TRANSACTION
+
+        console.log('✅ Utilisateur créé avec ID:', result.insertId);
+        res.status(201).json({
+            message: 'Utilisateur inscrit avec succès !',
+            userId: result.insertId
+        });
+
+    } catch (error) {
+        await connection.rollback(); // ANNULATION SI ERREUR
+        console.error('❌ Erreur registerUtilisateur:', error);
+        
+        // Gestion des erreurs
+        if (error.code === 'ER_TRUNCATED_WRONG_VALUE') {
+            return res.status(400).json({ message: 'Format de date invalide.' });
+        }
+        res.status(500).json({ message: 'Erreur serveur lors de la création du compte' });
+    } finally {
+        connection.release(); // LIBÉRER LA CONNEXION
     }
-    
-    res.status(500).json({ 
-      message: 'Erreur serveur lors de la cr├⌐ation du compte',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
 };
-
 // POST /auth/facebook
 exports.facebookAuth = async (req, res) => {
-  // AJOUT : on r├⌐cup├¿re push_notification
-  const { accessToken, push_notification } = req.body;
+    // AJOUT : on récupère code_parrainage
+    const { accessToken, push_notification, code_parrainage } = req.body;
 
-  if (!accessToken) {
-      return res.status(400).json({ message: 'Access token requis.' });
-  }
+    if (!accessToken) {
+        return res.status(400).json({ message: 'Access token requis.' });
+    }
 
-  try {
-      // ... [LOGIQUE FACEBOOK EXISTANTE : R├ëCUP├ëRATION PROFIL] ...
-      console.log('Tentative de connexion Facebook...');
-      const fbRes = await axios.get(`https://graph.facebook.com/v12.0/me`, {
-          params: {
-              fields: 'id,first_name,last_name,email,picture.type(large)',
-              access_token: accessToken
-          }
-      });
-      
-      const profile = fbRes.data;
-      const id_facebook = profile.id;
-      const nom = profile.last_name || '';
-      const prenom = profile.first_name || '';
-      const nom_utilisateur = [prenom, nom].filter(Boolean).join(' ') || `fb_user_${id_facebook}`;
-      const email = profile.email || null;
-      
-      let photo_profil = null;
-      if (profile.picture && profile.picture.data && profile.picture.data.url) {
-          photo_profil = profile.picture.data.url;
-      } else {
-           photo_profil = `https://graph.facebook.com/${id_facebook}/picture?type=large`;
-      }
+    try {
+        console.log('Tentative de connexion Facebook...');
+        const fbRes = await axios.get(`https://graph.facebook.com/v12.0/me`, {
+            params: {
+                fields: 'id,first_name,last_name,email,picture.type(large)',
+                access_token: accessToken
+            }
+        });
 
-      // ... [LOGIQUE FACEBOOK EXISTANTE : CHECK USER EXIST] ...
-      const query = email 
-          ? 'SELECT * FROM utilisateurs WHERE id_facebook = ? OR email = ?'
-          : 'SELECT * FROM utilisateurs WHERE id_facebook = ?';
-      const params = email ? [id_facebook, email] : [id_facebook];
-      
-      let [rows] = await pool.execute(query, params);
-      let user = rows[0];
+        const profile = fbRes.data;
+        const id_facebook = profile.id;
+        const nom = profile.last_name || '';
+        const prenom = profile.first_name || '';
+        const nom_utilisateur = [prenom, nom].filter(Boolean).join(' ') || `fb_user_${id_facebook}`;
+        const email = profile.email || null;
 
-      if (!user) {
-          // Cr├⌐ation
-          const now = new Date();
-          const [inserted] = await pool.execute(
-              `INSERT INTO utilisateurs 
-              (nom_utilisateur, email, mot_de_passe, commune_choisie, est_actif, id_facebook, date_inscription, contact, photo_profil, nom, prenom) 
-              VALUES (?, ?, NULL, NULL, ?, ?, ?, NULL, ?, ?, ?)`,
-              [nom_utilisateur, email, true, id_facebook, now, photo_profil, nom, prenom]
-          );
-          const insertedId = inserted.insertId;
-          [rows] = await pool.execute('SELECT *, "utilisateur" as role FROM utilisateurs WHERE id = ?', [insertedId]);
-          user = rows[0];
-      } else {
-          // Mise ├á jour existante...
-          // ... [LOGIQUE UPDATE EXISTANTE COPI├ëE DE TON CODE] ...
-          const updates = [];
-          const updateParams = [];
-          if (photo_profil && photo_profil !== user.photo_profil) { updates.push('photo_profil = ?'); updateParams.push(photo_profil); }
-          if (nom && nom !== user.nom) { updates.push('nom = ?'); updateParams.push(nom); }
-          if (prenom && prenom !== user.prenom) { updates.push('prenom = ?'); updateParams.push(prenom); }
-          if (!user.id_facebook) { updates.push('id_facebook = ?'); updateParams.push(id_facebook); }
-          
-          if (updates.length > 0) {
-              updateParams.push(user.id);
-              await pool.execute(`UPDATE utilisateurs SET ${updates.join(', ')} WHERE id = ?`, updateParams);
-              [rows] = await pool.execute('SELECT *, "utilisateur" as role FROM utilisateurs WHERE id = ?', [user.id]);
-              user = rows[0];
-          }
-      }
+        let photo_profil = null;
+        if (profile.picture && profile.picture.data && profile.picture.data.url) {
+            photo_profil = profile.picture.data.url;
+        } else {
+            photo_profil = `https://graph.facebook.com/${id_facebook}/picture?type=large`;
+        }
 
-      // =================================================================
-      // <-- NOUVEAU : ENREGISTREMENT DU TOKEN PUSH FACEBOOK
-      // =================================================================
-      if (push_notification) {
-          await pool.execute(
-              'UPDATE utilisateurs SET push_notification = ? WHERE id = ?',
-              [push_notification, user.id]
-          );
-          // Mettre ├á jour l'objet user en m├⌐moire pour le renvoyer au front (optionnel)
-          user.push_notification = push_notification; 
-      }
-      // =================================================================
+        const query = email
+            ? 'SELECT * FROM utilisateurs WHERE id_facebook = ? OR email = ?'
+            : 'SELECT * FROM utilisateurs WHERE id_facebook = ?';
+        const params = email ? [id_facebook, email] : [id_facebook];
 
-      // G├⌐n├⌐ration des tokens
-      const payload = { id: user.id, email: user.email, role: 'utilisateur' };
-      const newAccessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRATION || '15m' });
-      const newRefreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.REFRESH_TOKEN_EXPIRATION || '7d' });
+        let [rows] = await pool.execute(query, params);
+        let user = rows[0];
 
-      await pool.execute(`UPDATE utilisateurs SET refresh_token = ?, est_en_ligne = 1, derniere_connexion = NOW() WHERE id = ?`, [newRefreshToken, user.id]);
+        if (!user) {
+            // === LOGIQUE PARRAINAGE (NOUVEAU UTILISATEUR) ===
+            let parrainId = null;
+            if (code_parrainage && code_parrainage.trim() !== '') {
+                const [parrains] = await pool.execute('SELECT id FROM utilisateurs WHERE code_parrainage = ?', [code_parrainage]);
+                if (parrains.length > 0) {
+                    parrainId = parrains[0].id;
+                    // Créditer le parrain
+                    await pool.execute('UPDATE utilisateurs SET points = COALESCE(points, 0) + 30 WHERE id = ?', [parrainId]);
+                    await pool.execute('INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, ?, ?, NOW())', [parrainId, 30, 'bonus_parrainage_inscription']);
+                }
+            }
+            // ===============================================
 
-      res.status(200).json({
-          accessToken: newAccessToken,
-          refreshToken: newRefreshToken,
-          user: {
-              id: user.id,
-              nom_utilisateur: user.nom_utilisateur,
-              email: user.email,
-              photo_profil: user.photo_profil,
-              role: 'utilisateur',
-              push_notification: user.push_notification // On renvoie le token stock├⌐
-          },
-          profileCompleted: Boolean(user.commune_choisie && user.date_naissance)
-      });
+            // Création avec parrain_id
+            const now = new Date();
+            const [inserted] = await pool.execute(
+                `INSERT INTO utilisateurs 
+              (nom_utilisateur, email, mot_de_passe, commune_choisie, est_actif, id_facebook, date_inscription, contact, photo_profil, nom, prenom, parrain_id) 
+              VALUES (?, ?, NULL, NULL, ?, ?, ?, NULL, ?, ?, ?, ?)`,
+                [nom_utilisateur, email, true, id_facebook, now, photo_profil, nom, prenom, parrainId]
+            );
+            const insertedId = inserted.insertId;
+            [rows] = await pool.execute('SELECT *, "utilisateur" as role FROM utilisateurs WHERE id = ?', [insertedId]);
+            user = rows[0];
+        } else {
+            // Mise à jour existante...
+            const updates = [];
+            const updateParams = [];
+            if (photo_profil && photo_profil !== user.photo_profil) { updates.push('photo_profil = ?'); updateParams.push(photo_profil); }
+            if (nom && nom !== user.nom) { updates.push('nom = ?'); updateParams.push(nom); }
+            if (prenom && prenom !== user.prenom) { updates.push('prenom = ?'); updateParams.push(prenom); }
+            if (!user.id_facebook) { updates.push('id_facebook = ?'); updateParams.push(id_facebook); }
 
-  } catch (error) {
-      console.error("--- ERREUR DANS facebookAuth ---", error);
-      res.status(500).json({ message: 'Erreur serveur.', error: error.message });
-  }
+            if (updates.length > 0) {
+                updateParams.push(user.id);
+                await pool.execute(`UPDATE utilisateurs SET ${updates.join(', ')} WHERE id = ?`, updateParams);
+                [rows] = await pool.execute('SELECT *, "utilisateur" as role FROM utilisateurs WHERE id = ?', [user.id]);
+                user = rows[0];
+            }
+        }
+
+        // Enregistrement Token Push
+        if (push_notification) {
+            await pool.execute('UPDATE utilisateurs SET push_notification = ? WHERE id = ?', [push_notification, user.id]);
+            user.push_notification = push_notification;
+        }
+
+        // Génération Tokens
+        const payload = { id: user.id, email: user.email, role: 'utilisateur' };
+        const newAccessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRATION || '15m' });
+        const newRefreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.REFRESH_TOKEN_EXPIRATION || '7d' });
+
+        await pool.execute(`UPDATE utilisateurs SET refresh_token = ?, est_en_ligne = 1, derniere_connexion = NOW() WHERE id = ?`, [newRefreshToken, user.id]);
+
+        await handleDailyLogin(user.id);
+
+        res.status(200).json({
+            accessToken: newAccessToken,
+            refreshToken: newRefreshToken,
+            user: {
+                id: user.id,
+                nom_utilisateur: user.nom_utilisateur,
+                email: user.email,
+                photo_profil: user.photo_profil,
+                role: 'utilisateur',
+                push_notification: user.push_notification
+            },
+            profileCompleted: Boolean(user.commune_choisie && user.date_naissance)
+        });
+
+    } catch (error) {
+        console.error("--- ERREUR DANS facebookAuth ---", error);
+        res.status(500).json({ message: 'Erreur serveur.', error: error.message });
+    }
 };
 
-  // PATCH /auth/utilisateur/complete-profile
-  exports.completeFacebookProfile = async (req, res) => {
+// PATCH /auth/utilisateur/complete-profile
+exports.completeFacebookProfile = async (req, res) => {
     const authHeader = req.headers.authorization || '';
     const token = authHeader.split(' ')[1];
     if (!token) return res.status(401).json({ message: 'Token manquant.' });
-  
+
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const userId = decoded.id;
-      
-      // MODIFICATION : R├⌐cup├⌐rer 'genre' et 'contact'
-      const { commune_choisie, date_naissance, contact, genre } = req.body;
-  
-      // MODIFICATION : Validation
-      if (!commune_choisie || !date_naissance || !contact || !genre) {
-        return res.status(400).json({ message: 'Commune, date de naissance, contact et genre sont requis.' });
-      }
-  
-      // MODIFICATION : Mettre ├á jour la BDD
-      await pool.execute(
-        'UPDATE utilisateurs SET commune_choisie = ?, date_naissance = ?, contact = ?, genre = ? WHERE id = ?',
-        [commune_choisie, date_naissance, contact, genre, userId]
-      );
-  
-      // Recharger l'utilisateur
-      const [rows] = await pool.execute('SELECT * FROM utilisateurs WHERE id = ?', [userId]);
-      const user = rows[0];
-  
-      // Nouvelle token (optionnel) pour rafra├«chir payload si tu stockes la commune dedans
-      const payload = { 
-        id: user.id, 
-        email: user.email, 
-        role: user.role || 'utilisateur',
-        commune_choisie: user.commune_choisie 
-    };
-    const newToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '8h' });
-  
-      res.status(200).json({
-        message: 'Profil mis ├á jour.',
-        token: newToken,
-        user: {
-          id: user.id,
-          nom_utilisateur: user.nom_utilisateur,
-          email: user.email,
-          commune_choisie: user.commune_choisie,
-          date_naissance: user.date_naissance,
-          contact: user.contact,
-          genre: user.genre // AJOUT : Renvoyer le genre
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const userId = decoded.id;
+
+        // MODIFICATION : R├⌐cup├⌐rer 'genre' et 'contact'
+        const { commune_choisie, date_naissance, contact, genre } = req.body;
+
+        // MODIFICATION : Validation
+        if (!commune_choisie || !date_naissance || !contact || !genre) {
+            return res.status(400).json({ message: 'Commune, date de naissance, contact et genre sont requis.' });
         }
-      });
-  
+
+        // MODIFICATION : Mettre ├á jour la BDD
+        await pool.execute(
+            'UPDATE utilisateurs SET commune_choisie = ?, date_naissance = ?, contact = ?, genre = ? WHERE id = ?',
+            [commune_choisie, date_naissance, contact, genre, userId]
+        );
+
+        // Recharger l'utilisateur
+        const [rows] = await pool.execute('SELECT * FROM utilisateurs WHERE id = ?', [userId]);
+        const user = rows[0];
+
+        // Nouvelle token (optionnel) pour rafra├«chir payload si tu stockes la commune dedans
+        const payload = {
+            id: user.id,
+            email: user.email,
+            role: user.role || 'utilisateur',
+            commune_choisie: user.commune_choisie
+        };
+        const newToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '8h' });
+
+        res.status(200).json({
+            message: 'Profil mis ├á jour.',
+            token: newToken,
+            user: {
+                id: user.id,
+                nom_utilisateur: user.nom_utilisateur,
+                email: user.email,
+                commune_choisie: user.commune_choisie,
+                date_naissance: user.date_naissance,
+                contact: user.contact,
+                genre: user.genre // AJOUT : Renvoyer le genre
+            }
+        });
+
     } catch (error) {
-      console.error("Erreur completeFacebookProfile:", error);
-      if (error.name === 'JsonWebTokenError') return res.status(401).json({ message: 'Token invalide.' });
-      res.status(500).json({ message: 'Erreur serveur.' });
+        console.error("Erreur completeFacebookProfile:", error);
+        if (error.name === 'JsonWebTokenError') return res.status(401).json({ message: 'Token invalide.' });
+        res.status(500).json({ message: 'Erreur serveur.' });
     }
-  };
-  // POST /auth/google
-  exports.googleAuth = async (req, res) => {
-    // AJOUT : on r├⌐cup├¿re push_notification
-    const { accessToken, push_notification } = req.body;
+};
+// POST /auth/google
+exports.googleAuth = async (req, res) => {
+    // AJOUT : on récupère code_parrainage
+    const { accessToken, push_notification, code_parrainage } = req.body;
 
     if (!accessToken) {
         return res.status(400).json({ message: 'Access token Google requis.' });
     }
 
     try {
-        // ... [LOGIQUE GOOGLE EXISTANTE : R├ëCUP├ëRATION PROFIL] ...
         console.log('Tentative connexion Google...');
         const googleRes = await axios.get('https://www.googleapis.com/oauth2/v3/userinfo', {
             headers: { Authorization: `Bearer ${accessToken}` },
@@ -620,58 +710,66 @@ exports.facebookAuth = async (req, res) => {
         const photo_profil = profile.picture || null;
         const nom_utilisateur = profile.name || [prenom, nom].filter(Boolean).join(' ') || `google_user_${id_google}`;
 
-        if (!email) return res.status(400).json({ message: "Impossible de r├⌐cup├⌐rer l'email." });
+        if (!email) return res.status(400).json({ message: "Impossible de récupérer l'email." });
 
         let [rows] = await pool.execute('SELECT * FROM utilisateurs WHERE id_google = ? OR email = ?', [id_google, email]);
         let user = rows[0];
 
         if (!user) {
-            // Cr├⌐ation
+            // === LOGIQUE PARRAINAGE (NOUVEAU UTILISATEUR) ===
+            let parrainId = null;
+            if (code_parrainage && code_parrainage.trim() !== '') {
+                const [parrains] = await pool.execute('SELECT id FROM utilisateurs WHERE code_parrainage = ?', [code_parrainage]);
+                if (parrains.length > 0) {
+                    parrainId = parrains[0].id;
+                    // Créditer le parrain
+                    await pool.execute('UPDATE utilisateurs SET points = COALESCE(points, 0) + 30 WHERE id = ?', [parrainId]);
+                    await pool.execute('INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, ?, ?, NOW())', [parrainId, 30, 'bonus_parrainage_inscription']);
+                }
+            }
+            // ===============================================
+
+            // Création avec parrain_id
             const now = new Date();
             const [inserted] = await pool.execute(
                 `INSERT INTO utilisateurs 
-                (nom_utilisateur, email, mot_de_passe, commune_choisie, est_actif, id_google, date_inscription, photo_profil, nom, prenom) 
-                VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)`,
-                [nom_utilisateur, email, true, id_google, now, photo_profil, nom, prenom]
+                (nom_utilisateur, email, mot_de_passe, commune_choisie, est_actif, id_google, date_inscription, photo_profil, nom, prenom, parrain_id) 
+                VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)`,
+                [nom_utilisateur, email, true, id_google, now, photo_profil, nom, prenom, parrainId]
             );
             const insertedId = inserted.insertId;
             [rows] = await pool.execute('SELECT *, "utilisateur" as role FROM utilisateurs WHERE id = ?', [insertedId]);
             user = rows[0];
         } else {
-             // Mise ├á jour existante...
-             const updates = [];
-             const updateParams = [];
-             if (photo_profil && photo_profil !== user.photo_profil) { updates.push('photo_profil = ?'), updateParams.push(photo_profil); }
-             if (nom && nom !== user.nom) { updates.push('nom = ?'), updateParams.push(nom); }
-             if (prenom && prenom !== user.prenom) { updates.push('prenom = ?'), updateParams.push(prenom); }
-             if (!user.id_google) { updates.push('id_google = ?'), updateParams.push(id_google); }
- 
-             if (updates.length > 0) {
+            // Mise à jour existante...
+            const updates = [];
+            const updateParams = [];
+            if (photo_profil && photo_profil !== user.photo_profil) { updates.push('photo_profil = ?'), updateParams.push(photo_profil); }
+            if (nom && nom !== user.nom) { updates.push('nom = ?'), updateParams.push(nom); }
+            if (prenom && prenom !== user.prenom) { updates.push('prenom = ?'), updateParams.push(prenom); }
+            if (!user.id_google) { updates.push('id_google = ?'), updateParams.push(id_google); }
+
+            if (updates.length > 0) {
                 updateParams.push(user.id);
                 await pool.execute(`UPDATE utilisateurs SET ${updates.join(', ')} WHERE id = ?`, updateParams);
                 [rows] = await pool.execute('SELECT *, "utilisateur" as role FROM utilisateurs WHERE id = ?', [user.id]);
                 user = rows[0];
-             }
+            }
         }
 
-        // =================================================================
-        // <-- NOUVEAU : ENREGISTREMENT DU TOKEN PUSH GOOGLE
-        // =================================================================
+        // Enregistrement Token Push
         if (push_notification) {
-            await pool.execute(
-                'UPDATE utilisateurs SET push_notification = ? WHERE id = ?',
-                [push_notification, user.id]
-            );
+            await pool.execute('UPDATE utilisateurs SET push_notification = ? WHERE id = ?', [push_notification, user.id]);
             user.push_notification = push_notification;
         }
-        // =================================================================
 
         const payload = { id: user.id, email: user.email, role: 'utilisateur' };
         const newAccessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRATION || '15m' });
         const newRefreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.REFRESH_TOKEN_EXPIRATION || '7d' });
-        
-        // On met aussi ├á jour est_en_ligne ici pour ├¬tre coh├⌐rent
+
         await pool.execute(`UPDATE utilisateurs SET refresh_token = ?, est_en_ligne = 1, derniere_connexion = NOW() WHERE id = ?`, [newRefreshToken, user.id]);
+
+        await handleDailyLogin(user.id);
 
         res.status(200).json({
             accessToken: newAccessToken,
@@ -692,7 +790,7 @@ exports.facebookAuth = async (req, res) => {
         res.status(500).json({ message: 'Erreur serveur.', error: error.message });
     }
 };
-  exports.refreshToken = async (req, res) => {
+exports.refreshToken = async (req, res) => {
     const { token } = req.body;
     if (!token) {
         return res.status(401).json({ message: 'Refresh Token requis.' });
@@ -701,7 +799,7 @@ exports.facebookAuth = async (req, res) => {
     try {
         // 1. V├⌐rifier si le refresh token est valide
         const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
-        
+
         // 2. Trouver l'utilisateur et v├⌐rifier que le token correspond ├á celui en BDD
         const role = decoded.role;
         let userTable;
@@ -731,329 +829,329 @@ exports.facebookAuth = async (req, res) => {
 };
 
 exports.logout = async (req, res) => {
-  // 1. R├⌐cup├⌐rer le token depuis le header Authorization
-  const authHeader = req.headers.authorization;
-  
-  // Si pas de header ou mal form├⌐, on consid├¿re que c'est d├⌐j├á "ok" (204 No Content)
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.sendStatus(204); 
-  }
+    // 1. R├⌐cup├⌐rer le token depuis le header Authorization
+    const authHeader = req.headers.authorization;
 
-  const token = authHeader.split(' ')[1]; // On enl├¿ve "Bearer " pour garder juste le token
+    // Si pas de header ou mal form├⌐, on consid├¿re que c'est d├⌐j├á "ok" (204 No Content)
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.sendStatus(204);
+    }
 
-  try {
-      // 2. V├⌐rifier le token (On utilise JWT_SECRET car c'est l'Access Token qui est dans le header)
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      
-      const userId = decoded.id;
-      const role = decoded.role;
-      let userTable;
-      
-      if (role === 'superadmin' || role === 'admin') userTable = 'administrateurs';
-      else if (role === 'client') userTable = 'clients';
-      else if (role === 'utilisateur') userTable = 'utilisateurs';
-      else return res.sendStatus(204);
+    const token = authHeader.split(' ')[1]; // On enl├¿ve "Bearer " pour garder juste le token
 
-      // 3. Effacer le refresh token en base de donn├⌐es (cela d├⌐connecte effectivement la session)
-      await pool.execute(`UPDATE ${userTable} SET refresh_token = NULL WHERE id = ?`, [userId]);
+    try {
+        // 2. V├⌐rifier le token (On utilise JWT_SECRET car c'est l'Access Token qui est dans le header)
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-      // 4. Gestion sp├⌐cifique utilisateurs (Statut en ligne + Push Notification)
-      if (userTable === 'utilisateurs') {
-          console.log(`[LOGOUT] D├⌐connexion utilisateur ID: ${userId} via Header Authorization`);
-          
-          // =================================================================
-          // SUPPRESSION DU TOKEN DE NOTIFICATION ET STATUT HORS LIGNE
-          // =================================================================
-          await pool.execute(
-              'UPDATE utilisateurs SET est_en_ligne = 0, push_notification = NULL WHERE id = ?', 
-              [userId]
-          );
+        const userId = decoded.id;
+        const role = decoded.role;
+        let userTable;
 
-          // Notification Socket.io
-          const io = req.app.get('io');
-          if (io) {
-              try {
-                  const [rows] = await pool.execute(
-                      `SELECT id, nom_utilisateur, email, photo_profil, derniere_connexion, est_en_ligne
+        if (role === 'superadmin' || role === 'admin') userTable = 'administrateurs';
+        else if (role === 'client') userTable = 'clients';
+        else if (role === 'utilisateur') userTable = 'utilisateurs';
+        else return res.sendStatus(204);
+
+        // 3. Effacer le refresh token en base de donn├⌐es (cela d├⌐connecte effectivement la session)
+        await pool.execute(`UPDATE ${userTable} SET refresh_token = NULL WHERE id = ?`, [userId]);
+
+        // 4. Gestion sp├⌐cifique utilisateurs (Statut en ligne + Push Notification)
+        if (userTable === 'utilisateurs') {
+            console.log(`[LOGOUT] D├⌐connexion utilisateur ID: ${userId} via Header Authorization`);
+
+            // =================================================================
+            // SUPPRESSION DU TOKEN DE NOTIFICATION ET STATUT HORS LIGNE
+            // =================================================================
+            await pool.execute(
+                'UPDATE utilisateurs SET est_en_ligne = 0, push_notification = NULL WHERE id = ?',
+                [userId]
+            );
+
+            // Notification Socket.io
+            const io = req.app.get('io');
+            if (io) {
+                try {
+                    const [rows] = await pool.execute(
+                        `SELECT id, nom_utilisateur, email, photo_profil, derniere_connexion, est_en_ligne
                        FROM utilisateurs WHERE est_en_ligne = 1 ORDER BY derniere_connexion DESC`
-                  );
-                  const normalized = rows.map(r => ({
-                      id: r.id,
-                      nom_utilisateur: r.nom_utilisateur,
-                      email: r.email,
-                      photo_profil: r.photo_profil,
-                      derniere_connexion: r.derniere_connexion,
-                      est_en_ligne: !!r.est_en_ligne
-                  }));
-                  io.emit('update_online_users', normalized);
-              } catch (e) {
-                  console.error('Logout: erreur socket update:', e);
-              }
-          }
-      }
+                    );
+                    const normalized = rows.map(r => ({
+                        id: r.id,
+                        nom_utilisateur: r.nom_utilisateur,
+                        email: r.email,
+                        photo_profil: r.photo_profil,
+                        derniere_connexion: r.derniere_connexion,
+                        est_en_ligne: !!r.est_en_ligne
+                    }));
+                    io.emit('update_online_users', normalized);
+                } catch (e) {
+                    console.error('Logout: erreur socket update:', e);
+                }
+            }
+        }
 
-      res.status(200).json({ message: 'D├⌐connexion r├⌐ussie.' });
+        res.status(200).json({ message: 'D├⌐connexion r├⌐ussie.' });
 
-  } catch (error) {
-      console.error("Erreur lors de la d├⌐connexion:", error.message);
-      // M├¬me si le token est expir├⌐, on renvoie un succ├¿s car l'utilisateur veut partir
-      res.sendStatus(204);
-  }
+    } catch (error) {
+        console.error("Erreur lors de la d├⌐connexion:", error.message);
+        // M├¬me si le token est expir├⌐, on renvoie un succ├¿s car l'utilisateur veut partir
+        res.sendStatus(204);
+    }
 };
 // --- FONCTION POUR MOT DE PASSE OUBLI├ë ---
 exports.forgotPassword = async (req, res) => {
-  const { email } = req.body;
+    const { email } = req.body;
 
-  if (!email) {
-      return res.status(400).json({ message: 'Email requis.' });
-  }
+    if (!email) {
+        return res.status(400).json({ message: 'Email requis.' });
+    }
 
-  try {
-      // V├⌐rifier dans les trois tables si l'email existe ET a un mot de passe
-      let user = null;
-      let userType = null;
+    try {
+        // V├⌐rifier dans les trois tables si l'email existe ET a un mot de passe
+        let user = null;
+        let userType = null;
 
-      // V├⌐rifier dans administrateurs
-      const [adminRows] = await pool.execute(
-          'SELECT id, email, nom_utilisateur, mot_de_passe FROM administrateurs WHERE email = ? AND mot_de_passe IS NOT NULL',
-          [email]
-      );
-      if (adminRows.length > 0) {
-          user = adminRows[0];
-          userType = 'administrateur';
-      }
+        // V├⌐rifier dans administrateurs
+        const [adminRows] = await pool.execute(
+            'SELECT id, email, nom_utilisateur, mot_de_passe FROM administrateurs WHERE email = ? AND mot_de_passe IS NOT NULL',
+            [email]
+        );
+        if (adminRows.length > 0) {
+            user = adminRows[0];
+            userType = 'administrateur';
+        }
 
-      // V├⌐rifier dans clients
-      if (!user) {
-          const [clientRows] = await pool.execute(
-              'SELECT id, email, nom_utilisateur, mot_de_passe FROM clients WHERE email = ? AND mot_de_passe IS NOT NULL',
-              [email]
-          );
-          if (clientRows.length > 0) {
-              user = clientRows[0];
-              userType = 'client';
-          }
-      }
+        // V├⌐rifier dans clients
+        if (!user) {
+            const [clientRows] = await pool.execute(
+                'SELECT id, email, nom_utilisateur, mot_de_passe FROM clients WHERE email = ? AND mot_de_passe IS NOT NULL',
+                [email]
+            );
+            if (clientRows.length > 0) {
+                user = clientRows[0];
+                userType = 'client';
+            }
+        }
 
-      // V├⌐rifier dans utilisateurs
-      if (!user) {
-          const [userRows] = await pool.execute(
-              'SELECT id, email, nom_utilisateur, mot_de_passe FROM utilisateurs WHERE email = ? AND mot_de_passe IS NOT NULL',
-              [email]
-          );
-          if (userRows.length > 0) {
-              user = userRows[0];
-              userType = 'utilisateur';
-          }
-      }
+        // V├⌐rifier dans utilisateurs
+        if (!user) {
+            const [userRows] = await pool.execute(
+                'SELECT id, email, nom_utilisateur, mot_de_passe FROM utilisateurs WHERE email = ? AND mot_de_passe IS NOT NULL',
+                [email]
+            );
+            if (userRows.length > 0) {
+                user = userRows[0];
+                userType = 'utilisateur';
+            }
+        }
 
-      // Si aucun utilisateur trouv├⌐ avec mot de passe
-      if (!user) {
-          return res.status(404).json({ 
-              message: 'Aucun compte actif trouv├⌐ avec cet email.' 
-          });
-      }
+        // Si aucun utilisateur trouv├⌐ avec mot de passe
+        if (!user) {
+            return res.status(404).json({
+                message: 'Aucun compte actif trouv├⌐ avec cet email.'
+            });
+        }
 
-      // G├⌐n├⌐rer le code de r├⌐initialisation
-      const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
-      const resetCodeExpiration = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+        // G├⌐n├⌐rer le code de r├⌐initialisation
+        const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
+        const resetCodeExpiration = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
-      // Stocker le code dans la table appropri├⌐e
-      let tableName;
-      switch (userType) {
-          case 'administrateur':
-              tableName = 'administrateurs';
-              break;
-          case 'client':
-              tableName = 'clients';
-              break;
-          case 'utilisateur':
-              tableName = 'utilisateurs';
-              break;
-      }
+        // Stocker le code dans la table appropri├⌐e
+        let tableName;
+        switch (userType) {
+            case 'administrateur':
+                tableName = 'administrateurs';
+                break;
+            case 'client':
+                tableName = 'clients';
+                break;
+            case 'utilisateur':
+                tableName = 'utilisateurs';
+                break;
+        }
 
-      await pool.execute(
-          `UPDATE ${tableName} SET reset_code = ?, reset_code_expiration = ? WHERE id = ?`,
-          [resetCode, resetCodeExpiration, user.id]
-      );
+        await pool.execute(
+            `UPDATE ${tableName} SET reset_code = ?, reset_code_expiration = ? WHERE id = ?`,
+            [resetCode, resetCodeExpiration, user.id]
+        );
 
-      // Envoyer l'email de r├⌐initialisation
-      await sendResetPasswordEmail(email, resetCode, user.nom_utilisateur || user.nom);
+        // Envoyer l'email de r├⌐initialisation
+        await sendResetPasswordEmail(email, resetCode, user.nom_utilisateur || user.nom);
 
-      res.status(200).json({ 
-          message: 'Un code de r├⌐initialisation a ├⌐t├⌐ envoy├⌐ ├á votre email.',
-          email: email 
-      });
+        res.status(200).json({
+            message: 'Un code de r├⌐initialisation a ├⌐t├⌐ envoy├⌐ ├á votre email.',
+            email: email
+        });
 
-  } catch (error) {
-      console.error("Erreur forgotPassword:", error);
-      res.status(500).json({ message: 'Erreur serveur' });
-  }
+    } catch (error) {
+        console.error("Erreur forgotPassword:", error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
 };
 
 // --- FONCTION POUR V├ëRIFIER LE CODE DE R├ëINITIALISATION ---
 exports.verifyResetCode = async (req, res) => {
-  const { email, resetCode } = req.body;
+    const { email, resetCode } = req.body;
 
-  if (!email || !resetCode) {
-      return res.status(400).json({ message: 'Email et code requis.' });
-  }
+    if (!email || !resetCode) {
+        return res.status(400).json({ message: 'Email et code requis.' });
+    }
 
-  try {
-      // V├⌐rifier dans les trois tables
-      let user = null;
-      let userType = null;
+    try {
+        // V├⌐rifier dans les trois tables
+        let user = null;
+        let userType = null;
 
-      const [adminRows] = await pool.execute(
-          'SELECT id, reset_code, reset_code_expiration FROM administrateurs WHERE email = ?',
-          [email]
-      );
-      if (adminRows.length > 0) {
-          user = adminRows[0];
-          userType = 'administrateur';
-      }
+        const [adminRows] = await pool.execute(
+            'SELECT id, reset_code, reset_code_expiration FROM administrateurs WHERE email = ?',
+            [email]
+        );
+        if (adminRows.length > 0) {
+            user = adminRows[0];
+            userType = 'administrateur';
+        }
 
-      if (!user) {
-          const [clientRows] = await pool.execute(
-              'SELECT id, reset_code, reset_code_expiration FROM clients WHERE email = ?',
-              [email]
-          );
-          if (clientRows.length > 0) {
-              user = clientRows[0];
-              userType = 'client';
-          }
-      }
+        if (!user) {
+            const [clientRows] = await pool.execute(
+                'SELECT id, reset_code, reset_code_expiration FROM clients WHERE email = ?',
+                [email]
+            );
+            if (clientRows.length > 0) {
+                user = clientRows[0];
+                userType = 'client';
+            }
+        }
 
-      if (!user) {
-          const [userRows] = await pool.execute(
-              'SELECT id, reset_code, reset_code_expiration FROM utilisateurs WHERE email = ?',
-              [email]
-          );
-          if (userRows.length > 0) {
-              user = userRows[0];
-              userType = 'utilisateur';
-          }
-      }
+        if (!user) {
+            const [userRows] = await pool.execute(
+                'SELECT id, reset_code, reset_code_expiration FROM utilisateurs WHERE email = ?',
+                [email]
+            );
+            if (userRows.length > 0) {
+                user = userRows[0];
+                userType = 'utilisateur';
+            }
+        }
 
-      if (!user) {
-          return res.status(404).json({ message: 'Utilisateur non trouv├⌐.' });
-      }
+        if (!user) {
+            return res.status(404).json({ message: 'Utilisateur non trouv├⌐.' });
+        }
 
-      // V├⌐rifier le code et son expiration
-      if (!user.reset_code || user.reset_code !== resetCode) {
-          return res.status(400).json({ message: 'Code de r├⌐initialisation incorrect.' });
-      }
+        // V├⌐rifier le code et son expiration
+        if (!user.reset_code || user.reset_code !== resetCode) {
+            return res.status(400).json({ message: 'Code de r├⌐initialisation incorrect.' });
+        }
 
-      if (new Date() > new Date(user.reset_code_expiration)) {
-          return res.status(400).json({ message: 'Code de r├⌐initialisation expir├⌐.' });
-      }
+        if (new Date() > new Date(user.reset_code_expiration)) {
+            return res.status(400).json({ message: 'Code de r├⌐initialisation expir├⌐.' });
+        }
 
-      res.status(200).json({ 
-          message: 'Code v├⌐rifi├⌐ avec succ├¿s.',
-          email: email 
-      });
+        res.status(200).json({
+            message: 'Code v├⌐rifi├⌐ avec succ├¿s.',
+            email: email
+        });
 
-  } catch (error) {
-      console.error("Erreur verifyResetCode:", error);
-      res.status(500).json({ message: 'Erreur serveur' });
-  }
+    } catch (error) {
+        console.error("Erreur verifyResetCode:", error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
 };
 
 // --- FONCTION POUR R├ëINITIALISER LE MOT DE PASSE ---
 exports.resetPassword = async (req, res) => {
-  const { email, resetCode, newPassword } = req.body;
+    const { email, resetCode, newPassword } = req.body;
 
-  if (!email || !resetCode || !newPassword) {
-      return res.status(400).json({ message: 'Email, code et nouveau mot de passe requis.' });
-  }
+    if (!email || !resetCode || !newPassword) {
+        return res.status(400).json({ message: 'Email, code et nouveau mot de passe requis.' });
+    }
 
-  if (newPassword.length < 6) {
-      return res.status(400).json({ message: 'Le mot de passe doit contenir au moins 6 caract├¿res.' });
-  }
+    if (newPassword.length < 6) {
+        return res.status(400).json({ message: 'Le mot de passe doit contenir au moins 6 caract├¿res.' });
+    }
 
-  try {
-      // V├⌐rifier dans les trois tables
-      let user = null;
-      let userType = null;
-      let tableName;
+    try {
+        // V├⌐rifier dans les trois tables
+        let user = null;
+        let userType = null;
+        let tableName;
 
-      const [adminRows] = await pool.execute(
-          'SELECT id, reset_code, reset_code_expiration FROM administrateurs WHERE email = ?',
-          [email]
-      );
-      if (adminRows.length > 0) {
-          user = adminRows[0];
-          userType = 'administrateur';
-          tableName = 'administrateurs';
-      }
+        const [adminRows] = await pool.execute(
+            'SELECT id, reset_code, reset_code_expiration FROM administrateurs WHERE email = ?',
+            [email]
+        );
+        if (adminRows.length > 0) {
+            user = adminRows[0];
+            userType = 'administrateur';
+            tableName = 'administrateurs';
+        }
 
-      if (!user) {
-          const [clientRows] = await pool.execute(
-              'SELECT id, reset_code, reset_code_expiration FROM clients WHERE email = ?',
-              [email]
-          );
-          if (clientRows.length > 0) {
-              user = clientRows[0];
-              userType = 'client';
-              tableName = 'clients';
-          }
-      }
+        if (!user) {
+            const [clientRows] = await pool.execute(
+                'SELECT id, reset_code, reset_code_expiration FROM clients WHERE email = ?',
+                [email]
+            );
+            if (clientRows.length > 0) {
+                user = clientRows[0];
+                userType = 'client';
+                tableName = 'clients';
+            }
+        }
 
-      if (!user) {
-          const [userRows] = await pool.execute(
-              'SELECT id, reset_code, reset_code_expiration FROM utilisateurs WHERE email = ?',
-              [email]
-          );
-          if (userRows.length > 0) {
-              user = userRows[0];
-              userType = 'utilisateur';
-              tableName = 'utilisateurs';
-          }
-      }
+        if (!user) {
+            const [userRows] = await pool.execute(
+                'SELECT id, reset_code, reset_code_expiration FROM utilisateurs WHERE email = ?',
+                [email]
+            );
+            if (userRows.length > 0) {
+                user = userRows[0];
+                userType = 'utilisateur';
+                tableName = 'utilisateurs';
+            }
+        }
 
-      if (!user) {
-          return res.status(404).json({ message: 'Utilisateur non trouv├⌐.' });
-      }
+        if (!user) {
+            return res.status(404).json({ message: 'Utilisateur non trouv├⌐.' });
+        }
 
-      // V├⌐rifier le code et son expiration
-      if (!user.reset_code || user.reset_code !== resetCode) {
-          return res.status(400).json({ message: 'Code de r├⌐initialisation incorrect.' });
-      }
+        // V├⌐rifier le code et son expiration
+        if (!user.reset_code || user.reset_code !== resetCode) {
+            return res.status(400).json({ message: 'Code de r├⌐initialisation incorrect.' });
+        }
 
-      if (new Date() > new Date(user.reset_code_expiration)) {
-          return res.status(400).json({ message: 'Code de r├⌐initialisation expir├⌐.' });
-      }
+        if (new Date() > new Date(user.reset_code_expiration)) {
+            return res.status(400).json({ message: 'Code de r├⌐initialisation expir├⌐.' });
+        }
 
-      // Hacher le nouveau mot de passe
-      const hashedPassword = await bcrypt.hash(newPassword, 10);
+        // Hacher le nouveau mot de passe
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-      // Mettre ├á jour le mot de passe et effacer le code de r├⌐initialisation
-      await pool.execute(
-          `UPDATE ${tableName} SET mot_de_passe = ?, reset_code = NULL, reset_code_expiration = NULL WHERE id = ?`,
-          [hashedPassword, user.id]
-      );
+        // Mettre ├á jour le mot de passe et effacer le code de r├⌐initialisation
+        await pool.execute(
+            `UPDATE ${tableName} SET mot_de_passe = ?, reset_code = NULL, reset_code_expiration = NULL WHERE id = ?`,
+            [hashedPassword, user.id]
+        );
 
-      res.status(200).json({ message: 'Mot de passe r├⌐initialis├⌐ avec succ├¿s.' });
+        res.status(200).json({ message: 'Mot de passe r├⌐initialis├⌐ avec succ├¿s.' });
 
-  } catch (error) {
-      console.error("Erreur resetPassword:", error);
-      res.status(500).json({ message: 'Erreur serveur' });
-  }
+    } catch (error) {
+        console.error("Erreur resetPassword:", error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
 };
 
 // --- FONCTION POUR ENVOYER L'EMAIL DE R├ëINITIALISATION ---
 const sendResetPasswordEmail = async (email, resetCode, username) => {
-  let transporter = nodemailer.createTransport({
-      host: process.env.EMAIL_HOST,
-      port: process.env.EMAIL_PORT,
-      secure: false,
-      auth: {
-          user: process.env.EMAIL_USER,
-          pass: process.env.EMAIL_PASS,
-      },
-  });
+    let transporter = nodemailer.createTransport({
+        host: process.env.EMAIL_HOST,
+        port: process.env.EMAIL_PORT,
+        secure: false,
+        auth: {
+            user: process.env.EMAIL_USER,
+            pass: process.env.EMAIL_PASS,
+        },
+    });
 
-  const emailHtml = `
+    const emailHtml = `
   <!DOCTYPE html>
   <html lang="fr">
   <head>
@@ -1132,10 +1230,10 @@ const sendResetPasswordEmail = async (email, resetCode, username) => {
   </html>
   `;
 
-  await transporter.sendMail({
-      from: `"PubCash Support" <${process.env.EMAIL_USER}>`,
-      to: email,
-      subject: "Reinitialisation de votre mot de passe PubCash",
-      html: emailHtml,
-  });
+    await transporter.sendMail({
+        from: `"PubCash Support" <${process.env.EMAIL_USER}>`,
+        to: email,
+        subject: "Reinitialisation de votre mot de passe PubCash",
+        html: emailHtml,
+    });
 };

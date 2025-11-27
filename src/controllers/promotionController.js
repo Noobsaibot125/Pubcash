@@ -25,21 +25,29 @@ exports.getPromotionsForUser = async (req, res) => {
     // 2. Initialisation du tableau params (C'ÉTAIT L'ERREUR PRINCIPALE)
     const params = [];
 
-    // 3. Construction de la requête SQL (CORRIGÉE)
-    // J'ai réparé la syntaxe SQL qui était cassée dans votre version
+    // --- CORRECTION ICI ---
+    // 1. On ajoute les champs de la table games (g.*) avec des alias clairs
+    // 2. On ajoute un LEFT JOIN sur la table games
     let query = `
           SELECT 
               p.*, 
               c.nom_utilisateur as client_nom_utilisateur, 
               c.commune as client_commune,
-              pk.remuneration AS remuneration_pack
+              pk.remuneration AS remuneration_pack,
+              g.id as game_id,
+              g.type as game_type,
+              g.question,
+              g.reponses,
+              g.bonne_reponse,
+              g.points_recompense
           FROM promotions p
           JOIN clients c ON p.id_client = c.id
           JOIN packs pk ON p.id_pack = pk.id
+          LEFT JOIN games g ON p.id = g.promotion_id AND g.statut = 'actif'
           WHERE p.statut = 'en_cours' 
             AND p.budget_restant > 0
             
-            -- Filtre sur l'âge (Utilise la variable age calculée en JS)
+            -- Filtre sur l'âge
             AND (
                 p.tranche_age = 'tous'
                 OR (p.tranche_age = '12-17' AND ? BETWEEN 12 AND 17)
@@ -47,17 +55,15 @@ exports.getPromotionsForUser = async (req, res) => {
             )
     `;
     
-    // On ajoute l'âge deux fois dans les params pour les deux '?' ci-dessus
+    // ... (Reste du code pour params.push(age, age), filtres commune, etc.)
     params.push(age, age);
 
-    // 4. Gestion du filtre Commune (Optionnel selon votre logique)
     if (filter === 'ma_commune' && userCommune) {
         query += ` AND (p.ciblage_commune = 'toutes' OR (p.ciblage_commune = 'ma_commune' AND c.commune = ?))`;
         params.push(userCommune);
     }
 
-    // 5. Exclusion des promotions déjà vues (Correction de votre bout de code cassé)
-    // On exclut les promotions où l'utilisateur a déjà fait une interaction de type 'vue'
+    // Exclusion des vues déjà faites
     query += ` AND NOT EXISTS (
         SELECT 1 FROM interactions i 
         WHERE i.id_promotion = p.id 
@@ -68,13 +74,13 @@ exports.getPromotionsForUser = async (req, res) => {
 
     query += ` ORDER BY p.date_creation DESC`;
 
-    // Exécution
     const [promotions] = await pool.execute(query, params);
 
-    // Formatage des URLs
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     const promotionsWithUrls = promotions.map(promo => ({
       ...promo,
+      // On s'assure que game_id est bien présent (même null)
+      game_id: promo.game_id || null, 
       url_video: promo.url_video && !promo.url_video.startsWith('http')
         ? `${baseUrl}/uploads/videos/${promo.url_video}`
         : promo.url_video,
@@ -147,17 +153,17 @@ const handleInteraction = async (req, res, interactionType) => {
     // Si on arrive ici, l'utilisateur est éligible ET l'interaction est nouvelle.
     // Le reste du code peut s'exécuter en toute sécurité.
 
-    // 3. Insérer l'interaction (like ou partage)
+   // 3. Insérer l'interaction
     await connection.execute(
       'INSERT INTO interactions (id_utilisateur, id_promotion, type_interaction) VALUES (?, ?, ?)',
       [userId, promotionId, interactionType]
     );
 
-    // 4. Mettre à jour le compteur de la promotion (likes/partages)
+    // 4. Mettre à jour compteur
     const columnName = interactionType === 'partage' ? 'partages' : 'likes';
     await connection.execute(`UPDATE promotions SET ${columnName} = ${columnName} + 1 WHERE id = ?`, [promotionId]);
 
-    // 5. Vérifier si les deux interactions (like + partage) sont faites pour déclencher la vue
+    // 5. Vérifier si VUE validée
     const [interactions] = await connection.execute(
       'SELECT COUNT(DISTINCT type_interaction) as count FROM interactions WHERE id_utilisateur = ? AND id_promotion = ? AND type_interaction IN (?, ?)',
       [userId, promotionId, 'like', 'partage']
@@ -166,28 +172,89 @@ const handleInteraction = async (req, res, interactionType) => {
     // Si le compte est à 2 (like + partage), on déclenche la logique de la "vue"
     if (interactions.length > 0 && interactions[0].count === 2) {
 
-      // ... (Le reste de votre logique de "vue" est ici et reste inchangé) ...
       const [existingView] = await connection.execute('SELECT id FROM interactions WHERE id_utilisateur = ? AND id_promotion = ? AND type_interaction = ?', [userId, promotionId, 'vue']);
+      
       if (existingView.length === 0) {
-        const [promoRows] = await connection.execute(`SELECT p.id, p.budget_restant, p.vues, p.vues_potentielles, pk.remuneration FROM promotions p JOIN packs pk ON p.id_pack = pk.id WHERE p.id = ? AND p.statut = 'en_cours' FOR UPDATE`, [promotionId]);
-        const promotion = promoRows[0];
+        // --- MODIFICATION ICI : On récupère aussi le nom du pack (pk.nom_pack) ---
+        const [promoRows] = await connection.execute(
+            `SELECT p.id, p.budget_restant, p.vues, p.vues_potentielles, pk.remuneration, pk.nom_pack 
+             FROM promotions p 
+             JOIN packs pk ON p.id_pack = pk.id 
+             WHERE p.id = ? AND p.statut = 'en_cours' FOR UPDATE`, 
+             [promotionId]
+        );
+        
+      const promotion = promoRows[0];
         if (promotion && Number(promotion.budget_restant) >= Number(promotion.remuneration)) {
           const montant = Number(promotion.remuneration);
+          
+          // Logique Vue Classique
           await connection.execute('INSERT INTO interactions (id_utilisateur, id_promotion, type_interaction) VALUES (?, ?, ?)', [userId, promotionId, 'vue']);
-          const newVues = promotion.vues + 1;
-          const newBudget = Number(promotion.budget_restant) - montant;
-          await connection.execute('UPDATE promotions SET vues = ?, budget_restant = ? WHERE id = ?', [newVues, newBudget, promotionId]);
+          
+          // Mise à jour stats promo et argent user
+          await connection.execute('UPDATE promotions SET vues = vues + 1, budget_restant = budget_restant - ? WHERE id = ?', [montant, promotionId]);
           await connection.execute('UPDATE utilisateurs SET remuneration_utilisateur = COALESCE(remuneration_utilisateur,0) + ? WHERE id = ?', [montant, userId]);
           await connection.execute('INSERT INTO user_gains (id_utilisateur, id_promotion, montant, type_gain) VALUES (?, ?, ?, ?)', [userId, promotionId, montant, 'vue']);
+
+          // === LOGIQUE PARRAINAGE EXISTANTE (Gardée) ===
+          if (promotion.nom_pack === 'Diamant' || promotion.nom_pack === 'diamant') {
+              // ... ton code parrainage ...
+             const [userRows] = await connection.execute('SELECT parrain_id FROM utilisateurs WHERE id = ?', [userId]);
+             if (userRows.length > 0 && userRows[0].parrain_id) {
+                 await connection.execute('UPDATE utilisateurs SET points = points + 5 WHERE id = ?', [userRows[0].parrain_id]);
+                 await connection.execute('INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, ?, ?, NOW())', [userRows[0].parrain_id, 5, 'bonus_parrainage_diamant']);
+             }
+          }
+
+          // =========================================================================
+          // <<< AJOUT ICI : GESTION BONUS 10 VIDÉOS PAR JOUR >>>
+          // =========================================================================
+          const today = new Date().toISOString().split('T')[0];
+          
+          // 1. On insère ou on incrémente le compteur journalier
+          await connection.execute(`
+            INSERT INTO daily_activity (user_id, date, videos_watched) 
+            VALUES (?, ?, 1)
+            ON DUPLICATE KEY UPDATE videos_watched = videos_watched + 1
+          `, [userId, today]);
+
+          // 2. On vérifie combien on en a regardé aujourd'hui
+          const [activityRows] = await connection.execute(
+            'SELECT videos_watched FROM daily_activity WHERE user_id = ? AND date = ?',
+            [userId, today]
+          );
+
+          if (activityRows.length > 0) {
+            const count = activityRows[0].videos_watched;
+            
+            // Si on vient d'atteindre exactement la 10ème vidéo
+            if (count === 10) {
+               await connection.execute(
+                 'UPDATE utilisateurs SET points = COALESCE(points, 0) + 5 WHERE id = ?',
+                 [userId]
+               );
+               await connection.execute(
+                 'INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, 5, ?, NOW())',
+                 [userId, 'bonus_10_videos_jour']
+               );
+            }
+          }
+          // =========================================================================
+          // <<< FIN DE L'AJOUT >>>
+          // =========================================================================
+
+          // Vérification fin de promo
+          const newVues = promotion.vues + 1;
+          const newBudget = Number(promotion.budget_restant) - montant; // Note: budget_restant original
           if (newVues >= promotion.vues_potentielles || newBudget < montant) {
             await connection.execute('UPDATE promotions SET statut = ?, date_fin = NOW() WHERE id = ?', ['termine', promotionId]);
-            // On passe `req` pour construire l'URL de l'image
             await notifyClientOfFinishedPromotion(promotionId, connection, req);
           }
+
         } else {
-          await connection.execute('UPDATE promotions SET statut = ?, date_fin = NOW() WHERE id = ?', ['termine', promotionId]);
-          // --- APPEL DE LA FONCTION D'ENVOI D'EMAIL ---
-          await notifyClientOfFinishedPromotion(promotionId, connection, req);
+            // Budget insuffisant
+             await connection.execute('UPDATE promotions SET statut = ?, date_fin = NOW() WHERE id = ?', ['termine', promotionId]);
+             await notifyClientOfFinishedPromotion(promotionId, connection, req);
         }
       }
     }
@@ -232,20 +299,25 @@ exports.viewPromotion = async (req, res) => {
   const userId = req.user.id;
   const connection = await pool.getConnection();
 
+  // Log de début
+  console.log(`\n--- [DEBUG] Début viewPromotion pour User ${userId} / Promo ${promotionId} ---`);
+
   try {
     await connection.beginTransaction();
 
-    // 1) Vérifier si une 'vue' a déjà été enregistrée pour cet utilisateur et cette promo
+    // 1) Vérifier si une 'vue' a déjà été enregistrée
     const [existing] = await connection.execute(
       'SELECT id FROM interactions WHERE id_utilisateur = ? AND id_promotion = ? AND type_interaction = ?',
       [userId, promotionId, 'vue']
     );
+
     if (existing.length > 0) {
+      console.log(`[DEBUG] ❌ Vue déjà existante. Arrêt du traitement.`);
       await connection.rollback();
       return res.status(200).json({ message: 'Vue déjà comptabilisée.' });
     }
 
-    // 2) Récupérer les infos de la promotion et du pack associé (FOR UPDATE pour verrouiller)
+    // 2) Récupérer les infos de la promotion
     const [promoRows] = await connection.execute(
       `SELECT p.id, p.budget_restant, p.vues, p.vues_potentielles, p.id_pack, pk.remuneration
          FROM promotions p
@@ -256,67 +328,115 @@ exports.viewPromotion = async (req, res) => {
 
     const promotion = promoRows[0];
     if (!promotion) {
+      console.log(`[DEBUG] ❌ Promotion introuvable ou terminée.`);
       await connection.rollback();
       return res.status(404).json({ message: 'Promotion non trouvée ou terminée.' });
     }
 
     const montant = Number(promotion.remuneration || 0);
 
-    // 3) Vérifier si le budget restant est suffisant pour une vue
+    // 3) Vérifier budget
     if (promotion.budget_restant < montant) {
+      console.log(`[DEBUG] ❌ Budget épuisé.`);
       await connection.execute(
         'UPDATE promotions SET statut = ?, date_fin = NOW() WHERE id = ?',
         ['termine', promotionId]
       );
-      // --- APPEL DE LA FONCTION D'ENVOI D'EMAIL ---
       await notifyClientOfFinishedPromotion(promotionId, connection, req);
       await connection.commit();
       return res.status(400).json({ message: 'Budget de la promotion épuisé.' });
     }
 
-    // 4) Enregistrer la vue dans interactions
+    // 4) Enregistrer la vue
+    console.log(`[DEBUG] ✅ Enregistrement interaction "vue"...`);
     await connection.execute(
       'INSERT INTO interactions (id_utilisateur, id_promotion, type_interaction) VALUES (?, ?, ?)',
       [userId, promotionId, 'vue']
     );
 
-    // 5) Mettre à jour les compteurs et le budget dans promotions
+    // 5) Update Promotion
     const newVues = promotion.vues + 1;
     const newBudget = Number(promotion.budget_restant) - montant;
-
     await connection.execute(
       'UPDATE promotions SET vues = ?, budget_restant = ? WHERE id = ?',
       [newVues, newBudget, promotionId]
     );
 
-    // 6) Créditer l'utilisateur et insérer historique user_gains
+    // 6) Créditer Cash Utilisateur
+    console.log(`[DEBUG] 💰 Crédit de ${montant} FCFA à l'utilisateur.`);
     await connection.execute(
       'UPDATE utilisateurs SET remuneration_utilisateur = COALESCE(remuneration_utilisateur,0) + ? WHERE id = ?',
       [montant, userId]
     );
-
     await connection.execute(
       'INSERT INTO user_gains (id_utilisateur, id_promotion, montant, type_gain) VALUES (?, ?, ?, ?)',
       [userId, promotionId, montant, 'vue']
     );
 
-    // 7) Terminer la promotion si nécessaire
+    // =========================================================================
+    // --- GESTION BONUS 10 VIDÉOS PAR JOUR (AVEC LOGS) ---
+    // =========================================================================
+    
+    const today = new Date().toISOString().split('T')[0];
+    console.log(`[DEBUG] 📅 Mise à jour daily_activity pour la date : ${today}`);
+
+    // A. Exécution de la requête d'incrémentation
+    // Note: Le résultat [result] contient affectedRows. 
+    // 1 = Insert, 2 = Update (C'est une spécificité MySQL avec ON DUPLICATE KEY)
+    const [resultUpdate] = await connection.execute(`
+        INSERT INTO daily_activity (user_id, date, videos_watched) 
+        VALUES (?, ?, 1)
+        ON DUPLICATE KEY UPDATE videos_watched = videos_watched + 1
+    `, [userId, today]);
+
+    console.log(`[DEBUG] Résultat SQL daily_activity: affectedRows = ${resultUpdate.affectedRows}`);
+
+    // B. Lecture pour vérification
+    const [activityRows] = await connection.execute(
+        'SELECT videos_watched FROM daily_activity WHERE user_id = ? AND date = ?',
+        [userId, today]
+    );
+
+    if (activityRows.length > 0) {
+        const count = activityRows[0].videos_watched;
+        console.log(`[DEBUG] 📊 Nouveau total videos_watched : ${count}`);
+
+        if (count === 10) {
+            console.log(`[DEBUG] 🎉 BONUS 10 VIDÉOS ATTEINT ! Attribution des 5 points.`);
+            
+            await connection.execute(
+                'UPDATE utilisateurs SET points = COALESCE(points, 0) + 5 WHERE id = ?',
+                [userId]
+            );
+
+            await connection.execute(
+                'INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, 5, ?, NOW())',
+                [userId, 'bonus_10_videos_jour']
+            );
+        } else {
+            console.log(`[DEBUG] Pas encore de bonus (Objectif: 10, Actuel: ${count})`);
+        }
+    } else {
+        console.log(`[DEBUG] ⚠️ ERREUR CRITIQUE: Impossible de relire la ligne daily_activity juste après insertion.`);
+    }
+    // =========================================================================
+
+    // 7) Fin de promo ?
     if (newVues >= promotion.vues_potentielles || newBudget < montant) {
       await connection.execute(
         'UPDATE promotions SET statut = ?, date_fin = NOW() WHERE id = ?',
         ['termine', promotionId]
       );
-      // On passe `req` pour construire l'URL de l'image
       await notifyClientOfFinishedPromotion(promotionId, connection, req);
     }
 
     await connection.commit();
+    console.log(`[DEBUG] ✅ Transaction validée avec succès.\n`);
     res.status(200).json({ message: 'Vue comptabilisée et budget déduit.' });
-
 
   } catch (error) {
     await connection.rollback();
-    console.error("Erreur viewPromotion:", error);
+    console.error("\n[DEBUG] ❌ ERREUR CRITIQUE dans viewPromotion:", error);
     res.status(500).json({ message: 'Erreur serveur' });
   } finally {
     connection.release();
