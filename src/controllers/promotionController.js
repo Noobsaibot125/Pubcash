@@ -12,34 +12,28 @@ exports.getPromotionsForUser = async (req, res) => {
   const userCommune = req.user.commune_choisie || null;
   const filter = req.query.filter || 'ma_commune';
 
-try {
-  // 1. Récupération des infos utilisateur pour l'âge
-  const [userData] = await pool.execute('SELECT date_naissance FROM utilisateurs WHERE id = ?', [userId]);
-  if (!userData.length || !userData[0].date_naissance) {
-    return res.status(403).json({ message: "Votre profil est incomplet (date de naissance manquante)." });
-  }
+  try {
+    // 1. Âge (inchangé)
+    const [userData] = await pool.execute('SELECT date_naissance FROM utilisateurs WHERE id = ?', [userId]);
+    if (!userData.length || !userData[0].date_naissance) {
+      return res.status(403).json({ message: "Votre profil est incomplet." });
+    }
+    const user = userData[0];
+    const birthDate = new Date(user.date_naissance);
+    const age = new Date(Date.now() - birthDate.getTime()).getUTCFullYear() - 1970;
 
-  const user = userData[0];
-  const birthDate = new Date(user.date_naissance);
-  const age = new Date(Date.now() - birthDate.getTime()).getUTCFullYear() - 1970;
+    const params = [];
 
-  // 2. Initialisation du tableau params (C'ÉTAIT L'ERREUR PRINCIPALE)
-  const params = [];
-
-  // --- CORRECTION ICI ---
-  // 1. On ajoute les champs de la table games (g.*) avec des alias clairs
-  // 2. On ajoute un LEFT JOIN sur la table games
-  let query = `
+    // 2. Requete de base
+    let query = `
           SELECT 
               p.*, 
               c.nom_utilisateur as client_nom_utilisateur, 
               c.commune as client_commune,
               pk.remuneration AS remuneration_pack,
+              pk.nom_pack,  -- IMPORTANT : On récupère le nom du pack pour le filtrage
               g.id as game_id,
               g.type as game_type,
-              g.question,
-              g.reponses,
-              g.bonne_reponse,
               g.points_recompense
           FROM promotions p
           JOIN clients c ON p.id_client = c.id
@@ -48,56 +42,65 @@ try {
           WHERE p.statut = 'en_cours' 
             AND p.budget_restant > 0
             
-            -- Filtre sur l'âge
+            -- Filtre âge
             AND (
                 p.tranche_age = 'tous'
                 OR (p.tranche_age = '12-17' AND ? BETWEEN 12 AND 17)
                 OR (p.tranche_age = '18+' AND ? >= 18)
             )
     `;
+    
+    params.push(age, age);
 
-  // ... (Reste du code pour params.push(age, age), filtres commune, etc.)
-  params.push(age, age);
+    // --- 3. LOGIQUE DE FILTRAGE (CORRIGÉE) ---
+    if (filter === 'ma_commune' && userCommune) {
+       query += ` AND (p.ciblage_commune = 'toutes' OR (p.ciblage_commune = 'ma_commune' AND c.commune = ?))`;
+       params.push(userCommune);
+    } 
+    else if (filter === 'argent') {
+       query += ` AND pk.nom_pack = 'Argent'`;
+    }
+    else if (filter === 'gold') {
+       query += ` AND pk.nom_pack = 'Gold'`;
+    }
+    else if (filter === 'diamant') {
+       query += ` AND pk.nom_pack = 'Diamant'`;
+    }
+    // Si filter === 'toutes', on n'ajoute rien, on prend tout.
 
-  if (filter === 'ma_commune' && userCommune) {
-    query += ` AND (p.ciblage_commune = 'toutes' OR (p.ciblage_commune = 'ma_commune' AND c.commune = ?))`;
-    params.push(userCommune);
-  }
-
-  // Exclusion des vues déjà faites
-  query += ` AND NOT EXISTS (
+    // 4. Exclusion des vues
+    query += ` AND NOT EXISTS (
         SELECT 1 FROM interactions i 
         WHERE i.id_promotion = p.id 
         AND i.id_utilisateur = ? 
         AND i.type_interaction = 'vue'
     )`;
-  params.push(userId);
+    params.push(userId);
 
-  query += ` ORDER BY p.date_creation DESC`;
+    query += ` ORDER BY p.date_creation DESC`;
 
-  const [promotions] = await pool.execute(query, params);
+    const [promotions] = await pool.execute(query, params);
 
-  const baseUrl = `${req.protocol}://${req.get('host')}`;
-  const promotionsWithUrls = promotions.map(promo => ({
-    ...promo,
-    // On s'assure que game_id est bien présent (même null)
-    game_id: promo.game_id || null,
-    url_video: promo.url_video && !promo.url_video.startsWith('http')
-      ? `${baseUrl}/uploads/videos/${promo.url_video}`
-      : promo.url_video,
-    thumbnail_url: promo.thumbnail_url && !promo.thumbnail_url.startsWith('http')
-      ? `${baseUrl}/uploads/thumbnails/${promo.thumbnail_url}`
-      : promo.thumbnail_url
-  }));
+    // ... (Formatage des URLs inchangé) ...
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const promotionsWithUrls = promotions.map(promo => ({
+      ...promo,
+      game_id: promo.game_id || null,
+      url_video: promo.url_video && !promo.url_video.startsWith('http')
+        ? `${baseUrl}/uploads/videos/${promo.url_video}`
+        : promo.url_video,
+      thumbnail_url: promo.thumbnail_url && !promo.thumbnail_url.startsWith('http')
+        ? `${baseUrl}/uploads/thumbnails/${promo.thumbnail_url}`
+        : promo.thumbnail_url
+    }));
 
-  res.status(200).json(promotionsWithUrls);
+    res.status(200).json(promotionsWithUrls);
 
-} catch (error) {
-  console.error("Erreur getPromotionsForUser:", error);
-  res.status(500).json({ message: 'Erreur serveur' });
-}
+  } catch (error) {
+    console.error("Erreur getPromotionsForUser:", error);
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
 };
-
 // --- VERSION CORRIGÉE ET SÉCURISÉE DE handleInteraction ---
 
 const handleInteraction = async (req, res, interactionType) => {
@@ -453,62 +456,31 @@ exports.viewPromotion = async (req, res) => {
 };
 // Récupère l'historique des promotions que l'utilisateur a likées ou partagées
 exports.getPromotionsHistorique = async (req, res) => {
-  if (req.user.role !== 'utilisateur') {
-    return res.status(403).json({ message: 'Accès non autorisé' });
-  }
   const userId = req.user.id;
-
   try {
     const baseUrl = `${req.protocol}://${req.get('host')}`;
 
-    // Récupérer les promotions avec leurs commentaires
+    // On ajoute 'vue' dans la liste des interactions
     const [promotions] = await pool.execute(
-      `SELECT DISTINCT p.* 
-             FROM promotions p
-             JOIN interactions i ON p.id = i.id_promotion
-             WHERE i.id_utilisateur = ? 
-               AND i.type_interaction IN ('like', 'partage')
-             ORDER BY i.id DESC`,
+      `SELECT DISTINCT p.*, i.type_interaction, i.date_interaction
+       FROM promotions p
+       JOIN interactions i ON p.id = i.id_promotion
+       WHERE i.id_utilisateur = ? 
+         AND i.type_interaction IN ('like', 'partage', 'vue')
+       ORDER BY i.date_interaction DESC`,
       [userId]
     );
 
-    if (promotions.length === 0) {
-      return res.status(200).json([]);
-    }
+    if (promotions.length === 0) return res.status(200).json([]);
 
-    // Récupérer les IDs des promotions pour charger les commentaires
-    const promoIds = promotions.map(p => p.id);
-    const placeholders = promoIds.map(() => '?').join(',');
+    // Formatage URL
+    const promotionsWithUrls = promotions.map(promo => ({
+       ...promo,
+       url_video: promo.url_video ? `${baseUrl}/uploads/videos/${promo.url_video}` : null,
+       thumbnail_url: promo.thumbnail_url ? `${baseUrl}/uploads/thumbnails/${promo.thumbnail_url}` : null,
+    }));
 
-    const [commentaires] = await pool.execute(
-      `SELECT 
-                c.id_promotion, 
-                c.commentaire, 
-                c.date_commentaire,
-                u.nom_utilisateur
-             FROM commentaires c
-             JOIN utilisateurs u ON c.id_utilisateur = u.id
-             WHERE c.id_promotion IN (${placeholders})`,
-      promoIds
-    );
-
-    // Associer les commentaires aux promotions
-    const promotionsWithComments = promotions.map(promo => {
-      const promoComments = commentaires.filter(c => c.id_promotion === promo.id);
-
-      return {
-        ...promo,
-        url_video: promo.url_video
-          ? `${baseUrl}/uploads/videos/${promo.url_video}`
-          : null,
-        thumbnail_url: promo.thumbnail_url
-          ? `${baseUrl}/uploads/thumbnails/${promo.thumbnail_url}`
-          : null,
-        commentaires: promoComments
-      };
-    });
-
-    return res.status(200).json(promotionsWithComments);
+    return res.status(200).json(promotionsWithUrls);
   } catch (error) {
     console.error('Erreur getPromotionsHistorique:', error);
     return res.status(500).json({ message: 'Erreur serveur' });
