@@ -7,6 +7,7 @@ const adminRoutes = require('./adminRoutes');
 const clientRoutes = require('./clientRoutes');
 const userRoutes = require('./userRoutes');
 const gameRoutes = require('./gameRoutes');
+const notificationRoutes = require('./notificationRoutes');
 
 router.use('/auth', authRoutes);
 router.use('/admin', adminRoutes);
@@ -15,5 +16,6 @@ router.use('/videos', videoRoutes);
 router.use('/promotions', promotionRoutes);
 router.use('/user', userRoutes);
 router.use('/games', gameRoutes);
+router.use('/notifications', notificationRoutes);
 
 module.exports = router;

@@ -1,6 +1,6 @@
 const pool = require('../config/db');
 const { v4: uuidv4 } = require('uuid');
-
+const notificationService = require('../services/notificationService');
 // --- UTILITAIRES ---
 
 // Pondération pour la roue
@@ -33,7 +33,6 @@ exports.spinWheel = async (req, res) => {
     try {
         await connection.beginTransaction();
 
-        // 1. Vérifier si déjà joué aujourd'hui
         const [activity] = await connection.execute(
             'SELECT daily_wheel_spun FROM daily_activity WHERE user_id = ? AND date = ?',
             [userId, today]
@@ -44,24 +43,31 @@ exports.spinWheel = async (req, res) => {
             return res.status(403).json({ message: 'Vous avez déjà tourné la roue aujourd\'hui.' });
         }
 
-        // 2. Tirage
         const result = spinWheelLogic();
 
-        // 3. Enregistrer l'activité (INSERT ou UPDATE si déjà ligne pour login/video)
         await connection.execute(`
       INSERT INTO daily_activity (user_id, date, daily_wheel_spun) 
       VALUES (?, ?, TRUE)
       ON DUPLICATE KEY UPDATE daily_wheel_spun = TRUE
     `, [userId, today]);
 
-        // 4. Créditer les points si gagné
         if (result.points > 0) {
             await connection.execute('UPDATE utilisateurs SET points = points + ? WHERE id = ?', [result.points, userId]);
-            // Historique (Optionnel, on peut le mettre dans game_history avec un game_id null ou spécial pour la roue)
             await connection.execute(
                 'INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, ?, ?, NOW())',
                 [userId, result.points, 'gagne']
             );
+
+            // --- AJOUT NOTIFICATION ROUE ---
+            await notificationService.envoyerNotification(
+                userId,
+                'jeu_gagne',
+                'Roue de la Fortune 🎡',
+                `Félicitations ! Vous avez gagné ${result.points} points.`,
+                { points: result.points, game_type: 'roue' }
+            ).catch(err => console.error('Erreur notification roue:', err));
+            // -------------------------------
+
         } else {
             await connection.execute(
                 'INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, ?, ?, NOW())',
@@ -115,24 +121,21 @@ exports.submitPuzzle = async (req, res) => {
     }
 
     const endTime = Date.now();
-    const duration = (endTime - session.startTime) / 1000; // en secondes
+    const duration = (endTime - session.startTime) / 1000;
 
-    // Marge de tolérance de 2 secondes pour la latence réseau
     if (duration > session.durationLimit + 2) {
         delete puzzleSessions[userId];
         return res.status(200).json({ success: false, message: 'Temps écoulé !' });
     }
 
-    // Si on arrive ici, c'est gagné (car le client ne doit appeler submit que s'il a fini)
-    // On pourrait ajouter une vérification de "mouvements" si on voulait être plus strict, 
-    // mais ici on fait confiance au client pour la résolution, on check juste le temps serveur.
-
     const connection = await pool.getConnection();
     try {
         await connection.beginTransaction();
 
-        const [game] = await connection.execute('SELECT points_recompense FROM games WHERE id = ?', [gameId]);
-        const points = game[0].points_recompense;
+        // J'ai ajouté `titre` dans le SELECT pour la notification
+        const [gameRows] = await connection.execute('SELECT titre, points_recompense FROM games WHERE id = ?', [gameId]);
+        const game = gameRows[0];
+        const points = game.points_recompense;
 
         await connection.execute('UPDATE utilisateurs SET points = points + ? WHERE id = ?', [points, userId]);
         await connection.execute(
@@ -140,9 +143,18 @@ exports.submitPuzzle = async (req, res) => {
             [userId, gameId, points, 'gagne']
         );
 
-       await connection.commit();
+        // --- AJOUT NOTIFICATION PUZZLE ---
+        await notificationService.envoyerNotification(
+            userId,
+            'jeu_gagne',
+            `${game.titre || 'Puzzle'}, Vous avez reçu ${points} pts`,
+            `Félicitations pour votre victoire !`,
+            { points, game_id: gameId, game_type: 'puzzle' }
+        ).catch(err => console.error('Erreur notification puzzle:', err));
+        // ---------------------------------
+
+        await connection.commit();
         delete puzzleSessions[userId];
-        // MODIFICATION : renvoyer 'points' dans la réponse
         res.status(200).json({ success: true, points, message: 'Félicitations !' });
 
     } catch (error) {
@@ -153,13 +165,13 @@ exports.submitPuzzle = async (req, res) => {
         connection.release();
     }
 };
-
 exports.submitQuiz = async (req, res) => {
     const { gameId, reponse } = req.body;
     const userId = req.user.id;
 
     try {
-        const [games] = await pool.execute('SELECT bonne_reponse, points_recompense FROM games WHERE id = ? AND type = "quiz"', [gameId]);
+        // J'ai ajouté `titre` dans le SELECT pour la notification
+        const [games] = await pool.execute('SELECT titre, bonne_reponse, points_recompense FROM games WHERE id = ? AND type = "quiz"', [gameId]);
         if (games.length === 0) return res.status(404).json({ message: 'Quiz non trouvé' });
 
         const game = games[0];
@@ -170,6 +182,17 @@ exports.submitQuiz = async (req, res) => {
                 'INSERT INTO game_history (user_id, game_id, points_gagnes, resultat) VALUES (?, ?, ?, ?)',
                 [userId, gameId, game.points_recompense, 'gagne']
             );
+
+            // --- AJOUT NOTIFICATION QUIZ ---
+            await notificationService.envoyerNotification(
+                userId,
+                'jeu_gagne',
+                `${game.titre || 'Quiz'}, Vous avez reçu ${game.points_recompense} pts`,
+                `Félicitations pour votre victoire !`,
+                { points: game.points_recompense, game_id: gameId, game_type: 'quiz' }
+            ).catch(err => console.error('Erreur notification quiz:', err));
+            // -------------------------------
+
             return res.status(200).json({ success: true, points: game.points_recompense, message: 'Bonne réponse !' });
         } else {
             await pool.execute(
@@ -181,11 +204,9 @@ exports.submitQuiz = async (req, res) => {
 
     } catch (error) {
         console.error('Erreur submitQuiz:', error);
-        // J'ai ajouté la réponse d'erreur ici pour que le front ne reste pas bloqué
         return res.status(500).json({ message: 'Erreur serveur', error: error.message });
     }
 };
-
 // Admin: Créer un jeu  
 exports.createGame = async (req, res) => {
     const {

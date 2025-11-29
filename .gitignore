@@ -7,3 +7,5 @@ uploads/videos/*
 uploads/thumbnails/*
 uploads/landing/*
 uploads/profile/*
+firebase_env_config.txt
+fix_ending.txt

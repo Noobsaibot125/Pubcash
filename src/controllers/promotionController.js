@@ -6,29 +6,30 @@ const { v4: uuidv4 } = require('uuid');
 const https = require('https'); // <--- AJOUTE CETTE LIGNE
 const FormData = require('form-data');
 const { URLSearchParams } = require('url');
+const notificationService = require('../services/notificationService');
 exports.getPromotionsForUser = async (req, res) => {
   const userId = req.user.id;
   const userCommune = req.user.commune_choisie || null;
   const filter = req.query.filter || 'ma_commune';
 
-  try {
-    // 1. Récupération des infos utilisateur pour l'âge
-    const [userData] = await pool.execute('SELECT date_naissance FROM utilisateurs WHERE id = ?', [userId]);
-    if (!userData.length || !userData[0].date_naissance) {
-      return res.status(403).json({ message: "Votre profil est incomplet (date de naissance manquante)." });
-    }
-    
-    const user = userData[0];
-    const birthDate = new Date(user.date_naissance);
-    const age = new Date(Date.now() - birthDate.getTime()).getUTCFullYear() - 1970;
+try {
+  // 1. Récupération des infos utilisateur pour l'âge
+  const [userData] = await pool.execute('SELECT date_naissance FROM utilisateurs WHERE id = ?', [userId]);
+  if (!userData.length || !userData[0].date_naissance) {
+    return res.status(403).json({ message: "Votre profil est incomplet (date de naissance manquante)." });
+  }
 
-    // 2. Initialisation du tableau params (C'ÉTAIT L'ERREUR PRINCIPALE)
-    const params = [];
+  const user = userData[0];
+  const birthDate = new Date(user.date_naissance);
+  const age = new Date(Date.now() - birthDate.getTime()).getUTCFullYear() - 1970;
 
-    // --- CORRECTION ICI ---
-    // 1. On ajoute les champs de la table games (g.*) avec des alias clairs
-    // 2. On ajoute un LEFT JOIN sur la table games
-    let query = `
+  // 2. Initialisation du tableau params (C'ÉTAIT L'ERREUR PRINCIPALE)
+  const params = [];
+
+  // --- CORRECTION ICI ---
+  // 1. On ajoute les champs de la table games (g.*) avec des alias clairs
+  // 2. On ajoute un LEFT JOIN sur la table games
+  let query = `
           SELECT 
               p.*, 
               c.nom_utilisateur as client_nom_utilisateur, 
@@ -54,47 +55,47 @@ exports.getPromotionsForUser = async (req, res) => {
                 OR (p.tranche_age = '18+' AND ? >= 18)
             )
     `;
-    
-    // ... (Reste du code pour params.push(age, age), filtres commune, etc.)
-    params.push(age, age);
 
-    if (filter === 'ma_commune' && userCommune) {
-        query += ` AND (p.ciblage_commune = 'toutes' OR (p.ciblage_commune = 'ma_commune' AND c.commune = ?))`;
-        params.push(userCommune);
-    }
+  // ... (Reste du code pour params.push(age, age), filtres commune, etc.)
+  params.push(age, age);
 
-    // Exclusion des vues déjà faites
-    query += ` AND NOT EXISTS (
+  if (filter === 'ma_commune' && userCommune) {
+    query += ` AND (p.ciblage_commune = 'toutes' OR (p.ciblage_commune = 'ma_commune' AND c.commune = ?))`;
+    params.push(userCommune);
+  }
+
+  // Exclusion des vues déjà faites
+  query += ` AND NOT EXISTS (
         SELECT 1 FROM interactions i 
         WHERE i.id_promotion = p.id 
         AND i.id_utilisateur = ? 
         AND i.type_interaction = 'vue'
     )`;
-    params.push(userId);
+  params.push(userId);
 
-    query += ` ORDER BY p.date_creation DESC`;
+  query += ` ORDER BY p.date_creation DESC`;
 
-    const [promotions] = await pool.execute(query, params);
+  const [promotions] = await pool.execute(query, params);
 
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const promotionsWithUrls = promotions.map(promo => ({
-      ...promo,
-      // On s'assure que game_id est bien présent (même null)
-      game_id: promo.game_id || null, 
-      url_video: promo.url_video && !promo.url_video.startsWith('http')
-        ? `${baseUrl}/uploads/videos/${promo.url_video}`
-        : promo.url_video,
-      thumbnail_url: promo.thumbnail_url && !promo.thumbnail_url.startsWith('http')
-        ? `${baseUrl}/uploads/thumbnails/${promo.thumbnail_url}`
-        : promo.thumbnail_url
-    }));
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  const promotionsWithUrls = promotions.map(promo => ({
+    ...promo,
+    // On s'assure que game_id est bien présent (même null)
+    game_id: promo.game_id || null,
+    url_video: promo.url_video && !promo.url_video.startsWith('http')
+      ? `${baseUrl}/uploads/videos/${promo.url_video}`
+      : promo.url_video,
+    thumbnail_url: promo.thumbnail_url && !promo.thumbnail_url.startsWith('http')
+      ? `${baseUrl}/uploads/thumbnails/${promo.thumbnail_url}`
+      : promo.thumbnail_url
+  }));
 
-    res.status(200).json(promotionsWithUrls);
+  res.status(200).json(promotionsWithUrls);
 
-  } catch (error) {
-    console.error("Erreur getPromotionsForUser:", error);
-    res.status(500).json({ message: 'Erreur serveur' });
-  }
+} catch (error) {
+  console.error("Erreur getPromotionsForUser:", error);
+  res.status(500).json({ message: 'Erreur serveur' });
+}
 };
 
 // --- VERSION CORRIGÉE ET SÉCURISÉE DE handleInteraction ---
@@ -153,7 +154,7 @@ const handleInteraction = async (req, res, interactionType) => {
     // Si on arrive ici, l'utilisateur est éligible ET l'interaction est nouvelle.
     // Le reste du code peut s'exécuter en toute sécurité.
 
-   // 3. Insérer l'interaction
+    // 3. Insérer l'interaction
     await connection.execute(
       'INSERT INTO interactions (id_utilisateur, id_promotion, type_interaction) VALUES (?, ?, ?)',
       [userId, promotionId, interactionType]
@@ -173,24 +174,24 @@ const handleInteraction = async (req, res, interactionType) => {
     if (interactions.length > 0 && interactions[0].count === 2) {
 
       const [existingView] = await connection.execute('SELECT id FROM interactions WHERE id_utilisateur = ? AND id_promotion = ? AND type_interaction = ?', [userId, promotionId, 'vue']);
-      
+
       if (existingView.length === 0) {
         // --- MODIFICATION ICI : On récupère aussi le nom du pack (pk.nom_pack) ---
         const [promoRows] = await connection.execute(
-            `SELECT p.id, p.budget_restant, p.vues, p.vues_potentielles, pk.remuneration, pk.nom_pack 
+          `SELECT p.id, p.budget_restant, p.vues, p.vues_potentielles, pk.remuneration, pk.nom_pack 
              FROM promotions p 
              JOIN packs pk ON p.id_pack = pk.id 
-             WHERE p.id = ? AND p.statut = 'en_cours' FOR UPDATE`, 
-             [promotionId]
+             WHERE p.id = ? AND p.statut = 'en_cours' FOR UPDATE`,
+          [promotionId]
         );
-        
-      const promotion = promoRows[0];
+
+        const promotion = promoRows[0];
         if (promotion && Number(promotion.budget_restant) >= Number(promotion.remuneration)) {
           const montant = Number(promotion.remuneration);
-          
+
           // Logique Vue Classique
           await connection.execute('INSERT INTO interactions (id_utilisateur, id_promotion, type_interaction) VALUES (?, ?, ?)', [userId, promotionId, 'vue']);
-          
+
           // Mise à jour stats promo et argent user
           await connection.execute('UPDATE promotions SET vues = vues + 1, budget_restant = budget_restant - ? WHERE id = ?', [montant, promotionId]);
           await connection.execute('UPDATE utilisateurs SET remuneration_utilisateur = COALESCE(remuneration_utilisateur,0) + ? WHERE id = ?', [montant, userId]);
@@ -198,19 +199,19 @@ const handleInteraction = async (req, res, interactionType) => {
 
           // === LOGIQUE PARRAINAGE EXISTANTE (Gardée) ===
           if (promotion.nom_pack === 'Diamant' || promotion.nom_pack === 'diamant') {
-              // ... ton code parrainage ...
-             const [userRows] = await connection.execute('SELECT parrain_id FROM utilisateurs WHERE id = ?', [userId]);
-             if (userRows.length > 0 && userRows[0].parrain_id) {
-                 await connection.execute('UPDATE utilisateurs SET points = points + 5 WHERE id = ?', [userRows[0].parrain_id]);
-                 await connection.execute('INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, ?, ?, NOW())', [userRows[0].parrain_id, 5, 'bonus_parrainage_diamant']);
-             }
+            // ... ton code parrainage ...
+            const [userRows] = await connection.execute('SELECT parrain_id FROM utilisateurs WHERE id = ?', [userId]);
+            if (userRows.length > 0 && userRows[0].parrain_id) {
+              await connection.execute('UPDATE utilisateurs SET points = points + 5 WHERE id = ?', [userRows[0].parrain_id]);
+              await connection.execute('INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, ?, ?, NOW())', [userRows[0].parrain_id, 5, 'bonus_parrainage_diamant']);
+            }
           }
 
           // =========================================================================
           // <<< AJOUT ICI : GESTION BONUS 10 VIDÉOS PAR JOUR >>>
           // =========================================================================
           const today = new Date().toISOString().split('T')[0];
-          
+
           // 1. On insère ou on incrémente le compteur journalier
           await connection.execute(`
             INSERT INTO daily_activity (user_id, date, videos_watched) 
@@ -226,17 +227,17 @@ const handleInteraction = async (req, res, interactionType) => {
 
           if (activityRows.length > 0) {
             const count = activityRows[0].videos_watched;
-            
+
             // Si on vient d'atteindre exactement la 10ème vidéo
             if (count === 10) {
-               await connection.execute(
-                 'UPDATE utilisateurs SET points = COALESCE(points, 0) + 5 WHERE id = ?',
-                 [userId]
-               );
-               await connection.execute(
-                 'INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, 5, ?, NOW())',
-                 [userId, 'bonus_10_videos_jour']
-               );
+              await connection.execute(
+                'UPDATE utilisateurs SET points = COALESCE(points, 0) + 5 WHERE id = ?',
+                [userId]
+              );
+              await connection.execute(
+                'INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, 5, ?, NOW())',
+                [userId, 'bonus_10_videos_jour']
+              );
             }
           }
           // =========================================================================
@@ -252,9 +253,9 @@ const handleInteraction = async (req, res, interactionType) => {
           }
 
         } else {
-            // Budget insuffisant
-             await connection.execute('UPDATE promotions SET statut = ?, date_fin = NOW() WHERE id = ?', ['termine', promotionId]);
-             await notifyClientOfFinishedPromotion(promotionId, connection, req);
+          // Budget insuffisant
+          await connection.execute('UPDATE promotions SET statut = ?, date_fin = NOW() WHERE id = ?', ['termine', promotionId]);
+          await notifyClientOfFinishedPromotion(promotionId, connection, req);
         }
       }
     }
@@ -372,11 +373,19 @@ exports.viewPromotion = async (req, res) => {
       'INSERT INTO user_gains (id_utilisateur, id_promotion, montant, type_gain) VALUES (?, ?, ?, ?)',
       [userId, promotionId, montant, 'vue']
     );
-
+// --- AJOUT NOTIFICATION : VIDÉO REGARDÉE ---
+    await notificationService.envoyerNotification(
+      userId,
+      'video_regardee',
+      'Vidéo visionnée !',
+      `Vous avez gagné ${montant} FCFA`,
+      { montant, promotion_id: promotionId }
+    ).catch(err => console.error('Erreur notification video_regardee:', err));
+    // ------------------------------------------
     // =========================================================================
     // --- GESTION BONUS 10 VIDÉOS PAR JOUR (AVEC LOGS) ---
     // =========================================================================
-    
+
     const today = new Date().toISOString().split('T')[0];
     console.log(`[DEBUG] 📅 Mise à jour daily_activity pour la date : ${today}`);
 
@@ -393,31 +402,31 @@ exports.viewPromotion = async (req, res) => {
 
     // B. Lecture pour vérification
     const [activityRows] = await connection.execute(
-        'SELECT videos_watched FROM daily_activity WHERE user_id = ? AND date = ?',
-        [userId, today]
+      'SELECT videos_watched FROM daily_activity WHERE user_id = ? AND date = ?',
+      [userId, today]
     );
 
     if (activityRows.length > 0) {
-        const count = activityRows[0].videos_watched;
-        console.log(`[DEBUG] 📊 Nouveau total videos_watched : ${count}`);
+      const count = activityRows[0].videos_watched;
+      console.log(`[DEBUG] 📊 Nouveau total videos_watched : ${count}`);
 
-        if (count === 10) {
-            console.log(`[DEBUG] 🎉 BONUS 10 VIDÉOS ATTEINT ! Attribution des 5 points.`);
-            
-            await connection.execute(
-                'UPDATE utilisateurs SET points = COALESCE(points, 0) + 5 WHERE id = ?',
-                [userId]
-            );
+      if (count === 10) {
+        console.log(`[DEBUG] 🎉 BONUS 10 VIDÉOS ATTEINT ! Attribution des 5 points.`);
 
-            await connection.execute(
-                'INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, 5, ?, NOW())',
-                [userId, 'bonus_10_videos_jour']
-            );
-        } else {
-            console.log(`[DEBUG] Pas encore de bonus (Objectif: 10, Actuel: ${count})`);
-        }
+        await connection.execute(
+          'UPDATE utilisateurs SET points = COALESCE(points, 0) + 5 WHERE id = ?',
+          [userId]
+        );
+
+        await connection.execute(
+          'INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, 5, ?, NOW())',
+          [userId, 'bonus_10_videos_jour']
+        );
+      } else {
+        console.log(`[DEBUG] Pas encore de bonus (Objectif: 10, Actuel: ${count})`);
+      }
     } else {
-        console.log(`[DEBUG] ⚠️ ERREUR CRITIQUE: Impossible de relire la ligne daily_activity juste après insertion.`);
+      console.log(`[DEBUG] ⚠️ ERREUR CRITIQUE: Impossible de relire la ligne daily_activity juste après insertion.`);
     }
     // =========================================================================
 
@@ -665,7 +674,7 @@ exports.withdrawEarnings = async (req, res) => {
 
   const transactionId = Date.now().toString() + Math.floor(Math.random() * 1000);
   const connection = await pool.getConnection();
-  let isCommitted = false; 
+  let isCommitted = false;
 
   try {
     await connection.beginTransaction();
@@ -700,11 +709,19 @@ exports.withdrawEarnings = async (req, res) => {
       'INSERT INTO demandes_retrait (id_utilisateur, montant, operateur_mobile, statut, date_demande, transaction_id) VALUES (?, ?, ?, ?, NOW(), ?)',
       [userId, withdrawalAmount, operator, 'en_cours', transactionId]
     );
-
-    await connection.commit(); 
-    isCommitted = true; 
+// --- AJOUT NOTIFICATION : RETRAIT INITIÉ ---
+    await notificationService.envoyerNotification(
+      userId,
+      'retrait_initie',
+      'Demande de retrait',
+      `En cours de traitement... ${withdrawalAmount} Fcfa`,
+      { montant: withdrawalAmount, transaction_id: transactionId }
+    ).catch(err => console.error('Erreur notification retrait_initie:', err));
+    // -------------------------------------------
+    await connection.commit();
+    isCommitted = true;
     // IMPORTANT : On relâche cette connexion maintenant, on n'en a plus besoin pour la suite
-    connection.release(); 
+    connection.release();
 
     // --- 4. APPEL CINETPAY ---
     try {
@@ -717,7 +734,7 @@ exports.withdrawEarnings = async (req, res) => {
       const nomContact = sanitizeName(user.nom) || 'Client';
       const prenomContact = sanitizeName(user.prenom) || 'PubCash';
       const paymentMethod = operator === 'wave' ? 'WAVECI' : null;
-      let notifyUrl = process.env.PRODUCTION_URL 
+      let notifyUrl = process.env.PRODUCTION_URL
         ? `${process.env.PRODUCTION_URL}/api/callbacks/cinetpay/withdrawal`
         : 'https://pub-cash.com/api/callbacks/cinetpay/withdrawal';
 
@@ -728,7 +745,7 @@ exports.withdrawEarnings = async (req, res) => {
       }]));
       await axios.post(`https://client.cinetpay.com/v1/transfer/contact?token=${token}&lang=fr`, paramsContact, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, httpsAgent: httpsAgent
-      }).catch(() => {});
+      }).catch(() => { });
 
       // Transfert
       const transferObject = {
@@ -763,35 +780,41 @@ exports.withdrawEarnings = async (req, res) => {
 
       // CinetPay renvoie parfois "0" (string) ou 0 (int). On convertit en string pour être sûr.
       if (String(result.code) === '0') {
-        
+
         // --- CORRECTION CRUCIALE ICI ---
         // On utilise `pool.execute` au lieu de `connection.execute` pour éviter les timeouts
         console.log(`✅ Succès CinetPay. Mise à jour BDD vers 'traite'...`);
-        
+
         await pool.execute(
           'UPDATE demandes_retrait SET statut = ?, date_traitement = NOW() WHERE transaction_id = ?',
           ['traite', transactionId]
         );
-        
-        console.log(`✅ BDD mise à jour.`);
+
+    // --- AJOUT NOTIFICATION : RETRAIT COMPLÉTÉ ---
+        await notificationService.envoyerNotification(
+          userId,
+          'retrait_complete',
+          'Demande de retrait',
+          `Validé ✓ ${withdrawalAmount} Fcfa`,
+          { montant: withdrawalAmount, transaction_id: transactionId, statut: 'succes' }
+        ).catch(err => console.error('Erreur notification retrait_complete:', err));
+        // ---------------------------------------------
+
         return res.status(200).json({ message: 'Retrait effectué avec succès !' });
 
       } else {
-        // ECHEC CINETPAY (Code != 0)
         throw { response: { data: result } };
       }
 
     } catch (apiError) {
       console.error("❌ ECHEC TRANSFERT:", apiError.response?.data || apiError.message);
-      
-      // REMBOURSEMENT AUTOMATIQUE
-      // On utilise aussi pool.execute ici pour la robustesse
+
       try {
         await pool.execute(
           'UPDATE utilisateurs SET remuneration_utilisateur = remuneration_utilisateur + ? WHERE id = ?',
           [withdrawalAmount, userId]
         );
-        
+
         await pool.execute(
           'UPDATE demandes_retrait SET statut = ?, erreur_details = ?, date_traitement = NOW() WHERE transaction_id = ?',
           ['rejete', String(apiError.response?.data?.message || apiError.message).slice(0, 250), transactionId]
@@ -810,18 +833,13 @@ exports.withdrawEarnings = async (req, res) => {
     }
 
   } catch (error) {
-    // ROLLBACK GLOBAL (Seulement si l'argent n'a pas encore été 'Commit')
     if (!isCommitted && connection) {
       await connection.rollback();
       connection.release();
-    } else if (isCommitted) {
-      // Si on a déjà release plus haut, on ne fait rien ici
-      // La connection est déjà relâchée dans le bloc try principal avant l'appel CinetPay
     }
-    
     console.error("💥 Erreur Critique Serveur:", error);
     if (!res.headersSent) {
-        res.status(500).json({ message: 'Erreur serveur interne inattendue.' });
+      res.status(500).json({ message: 'Erreur serveur interne inattendue.' });
     }
   }
 };
