@@ -13,25 +13,27 @@ exports.getPromotionsForUser = async (req, res) => {
   const filter = req.query.filter || 'ma_commune';
 
   try {
-    // 1. Âge (inchangé)
+    // 1. Récupération des infos utilisateur pour l'âge
     const [userData] = await pool.execute('SELECT date_naissance FROM utilisateurs WHERE id = ?', [userId]);
     if (!userData.length || !userData[0].date_naissance) {
-      return res.status(403).json({ message: "Votre profil est incomplet." });
+      return res.status(403).json({ message: "Votre profil est incomplet (date de naissance manquante)." });
     }
+
     const user = userData[0];
     const birthDate = new Date(user.date_naissance);
     const age = new Date(Date.now() - birthDate.getTime()).getUTCFullYear() - 1970;
 
     const params = [];
 
-    // 2. Requete de base
+    // 2. Initialisation de la requête
+    // On joint la table 'packs' (alias pk) pour pouvoir filtrer sur pk.remuneration
     let query = `
           SELECT 
               p.*, 
               c.nom_utilisateur as client_nom_utilisateur, 
               c.commune as client_commune,
               pk.remuneration AS remuneration_pack,
-              pk.nom_pack,  -- IMPORTANT : On récupère le nom du pack pour le filtrage
+              pk.nom_pack,
               g.id as game_id,
               g.type as game_type,
               g.points_recompense
@@ -42,7 +44,7 @@ exports.getPromotionsForUser = async (req, res) => {
           WHERE p.statut = 'en_cours' 
             AND p.budget_restant > 0
             
-            -- Filtre âge
+            -- Filtre sur l'âge
             AND (
                 p.tranche_age = 'tous'
                 OR (p.tranche_age = '12-17' AND ? BETWEEN 12 AND 17)
@@ -52,23 +54,28 @@ exports.getPromotionsForUser = async (req, res) => {
     
     params.push(age, age);
 
-    // --- 3. LOGIQUE DE FILTRAGE (CORRIGÉE) ---
+    // --- 3. LOGIQUE DE FILTRAGE SUR LA RÉMUNÉRATION (CORRIGÉE) ---
+    
     if (filter === 'ma_commune' && userCommune) {
+       // Filtre géographique
        query += ` AND (p.ciblage_commune = 'toutes' OR (p.ciblage_commune = 'ma_commune' AND c.commune = ?))`;
        params.push(userCommune);
     } 
     else if (filter === 'argent') {
-       query += ` AND pk.nom_pack = 'Argent'`;
+       // Selon ton image BDD : Pack ID 1 (Agent) = 50 FCFA
+       query += ` AND pk.remuneration = 50`;
     }
     else if (filter === 'gold') {
-       query += ` AND pk.nom_pack = 'Gold'`;
+       // Selon ton image BDD : Pack ID 2 (Gold) = 75 FCFA
+       query += ` AND pk.remuneration = 75`;
     }
     else if (filter === 'diamant') {
-       query += ` AND pk.nom_pack = 'Diamant'`;
+       // Selon ton image BDD : Pack ID 3 (Diamant) = 100 FCFA
+       query += ` AND pk.remuneration = 100`;
     }
-    // Si filter === 'toutes', on n'ajoute rien, on prend tout.
+    // Si filter === 'toutes', on ne met aucune condition supplémentaire ici.
 
-    // 4. Exclusion des vues
+    // 4. Exclusion des vues déjà faites
     query += ` AND NOT EXISTS (
         SELECT 1 FROM interactions i 
         WHERE i.id_promotion = p.id 
@@ -81,7 +88,7 @@ exports.getPromotionsForUser = async (req, res) => {
 
     const [promotions] = await pool.execute(query, params);
 
-    // ... (Formatage des URLs inchangé) ...
+    // Formatage des URLs (inchangé)
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     const promotionsWithUrls = promotions.map(promo => ({
       ...promo,
