@@ -1,6 +1,7 @@
 // pubcash-api/src/controllers/clientController.js
 const pool = require('../config/db');
 const bcrypt = require('bcryptjs');
+const notificationService = require('../services/notificationService'); 
 const axios = require('axios');
 const crypto = require('crypto');
 
@@ -215,6 +216,18 @@ exports.createPromotion = async (req, res) => {
         }
 
         await connection.commit();
+          // ============================================================
+        // === AJOUT : DÉCLENCHER LA NOTIFICATION ===
+        // ============================================================
+        // On ne met pas 'await' pour ne pas faire attendre le client 
+        // si l'envoi des notifs prend du temps (fire & forget)
+        notificationService.notifierNouvellePromotion(
+            insertedPromotionId, 
+            titre, 
+            ciblage_commune // Contiendra 'toutes' ou le nom de la commune
+        ).catch(err => console.error("Erreur background notification:", err));
+        // ============================================================
+
         res.status(201).json({ 
             message: 'Promotion créée avec succès !', 
             promotionId: insertedPromotionId,

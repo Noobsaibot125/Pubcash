@@ -36,7 +36,11 @@ exports.getPromotionsForUser = async (req, res) => {
               pk.nom_pack,
               g.id as game_id,
               g.type as game_type,
-              g.points_recompense
+              g.points_recompense,
+              -- AJOUT DES CHAMPS MANQUANTS ICI :
+              g.question,
+              g.reponses,
+              g.bonne_reponse
           FROM promotions p
           JOIN clients c ON p.id_client = c.id
           JOIN packs pk ON p.id_pack = pk.id
@@ -44,7 +48,6 @@ exports.getPromotionsForUser = async (req, res) => {
           WHERE p.statut = 'en_cours' 
             AND p.budget_restant > 0
             
-            -- Filtre sur l'âge
             AND (
                 p.tranche_age = 'tous'
                 OR (p.tranche_age = '12-17' AND ? BETWEEN 12 AND 17)

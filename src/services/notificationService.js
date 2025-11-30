@@ -178,7 +178,48 @@ exports.getUtilisateursByCommune = async (commune) => {
     );
     return rows.map(row => row.id);
 };
+/**
+ * --- NOUVELLE FONCTION : Notifier pour une nouvelle promotion ---
+ * Cible les utilisateurs selon la commune de la promotion
+ */
+exports.notifierNouvellePromotion = async (promotionId, titrePromo, ciblageCommune) => {
+    try {
+        let userIds = [];
 
+        // 1. Sélectionner les utilisateurs cibles
+        if (!ciblageCommune || ciblageCommune === 'toutes' || ciblageCommune === 'toutes_communes') {
+            // Cas 1 : Tout le monde (Ciblage "Toutes")
+            const [rows] = await pool.execute(
+                'SELECT id FROM utilisateurs WHERE est_actif = TRUE AND push_notification IS NOT NULL'
+            );
+            userIds = rows.map(r => r.id);
+            console.log(`📢 Diffusion globale : ${userIds.length} utilisateurs trouvés.`);
+        } else {
+            // Cas 2 : Commune spécifique (Ciblage "ma_commune" qui contient le nom de la commune ici)
+            // Note: Dans createPromotion, ciblage_commune contient le nom de la commune (ex: 'Yopougon') ou 'toutes'
+            userIds = await exports.getUtilisateursByCommune(ciblageCommune);
+            console.log(`📢 Diffusion ciblée (${ciblageCommune}) : ${userIds.length} utilisateurs trouvés.`);
+        }
+
+        if (userIds.length === 0) return;
+
+        // 2. Envoyer la notification de masse
+        // On utilise ta fonction existante envoyerNotificationMultiple
+        await exports.envoyerNotificationMultiple(
+            userIds,
+            'nouvelle_promo', // Type pour redirection mobile
+            'Nouvelle Vidéo Disponible ! 🎥',
+            `Regardez "${titrePromo}" et gagnez de l'argent maintenant !`,
+            { 
+                promotion_id: promotionId.toString(),
+                screen: 'home' // Indique à Flutter d'ouvrir l'accueil
+            }
+        );
+
+    } catch (error) {
+        console.error('❌ Erreur critique notifierNouvellePromotion:', error);
+    }
+};
 /**
  * Récupérer tous les utilisateurs de plusieurs communes
  */
