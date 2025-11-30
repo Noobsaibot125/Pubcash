@@ -71,34 +71,48 @@ exports.updateProfileForUser = async (req, res) => {
   const { nom, prenom, nom_utilisateur, contact, newPassword, currentPassword } = req.body;
 
   try {
+    // 1. Validation des champs obligatoires (hors mdp)
     if (!nom || !prenom || !nom_utilisateur) {
       return res.status(400).json({ message: 'Le nom, le prénom et le nom d\'utilisateur sont requis.' });
     }
 
-    // Exiger la confirmation du mot de passe pour toute modification (sécurité)
-    if (!currentPassword) {
-      return res.status(400).json({ message: 'Veuillez confirmer votre mot de passe pour enregistrer les modifications.' });
-    }
-
-    // Vérifier le mot de passe **AVANT** toute mise à jour
-    const [rows] = await pool.execute('SELECT mot_de_passe FROM utilisateurs WHERE id = ?', [userId]);
+    // 2. Récupérer l'utilisateur pour vérifier son type (Social ou Classique)
+    // On récupère aussi id_google et id_facebook pour savoir si c'est un compte social
+    const [rows] = await pool.execute(
+        'SELECT mot_de_passe, id_google, id_facebook FROM utilisateurs WHERE id = ?', 
+        [userId]
+    );
+    
     if (!rows || rows.length === 0) {
       return res.status(404).json({ message: 'Utilisateur non trouvé.' });
     }
     const user = rows[0];
 
-    const isMatch = await bcrypt.compare(currentPassword, user.mot_de_passe);
-    if (!isMatch) {
-      return res.status(401).json({ message: 'Le mot de passe actuel est incorrect.' });
-    }
+    // --- LOGIQUE DE SÉCURITÉ INTELLIGENTE ---
+    const isSocialUser = user.id_google || user.id_facebook;
+    const hasPassword = user.mot_de_passe && user.mot_de_passe.length > 0;
 
-    // Si ok, effectuer la mise à jour des champs de profil
+    // Si l'utilisateur n'est PAS social (donc il a un mot de passe), on DOIT vérifier
+    if (!isSocialUser && hasPassword) {
+        if (!currentPassword) {
+            return res.status(400).json({ message: 'Veuillez confirmer votre mot de passe pour enregistrer les modifications.' });
+        }
+        const isMatch = await bcrypt.compare(currentPassword, user.mot_de_passe);
+        if (!isMatch) {
+            return res.status(401).json({ message: 'Le mot de passe actuel est incorrect.' });
+        }
+    }
+    // Si c'est un utilisateur Social, on saute la vérification du mot de passe actuel
+    // ----------------------------------------
+
+    // 3. Mise à jour des informations de base
     await pool.execute(
       'UPDATE utilisateurs SET nom = ?, prenom = ?, nom_utilisateur = ?, contact = ? WHERE id = ?',
       [nom, prenom, nom_utilisateur, contact || null, userId]
     );
 
-    // Si changement de mot de passe demandé -> mettre à jour
+    // 4. Changement de mot de passe (Optionnel)
+    // Un utilisateur social peut définir un mot de passe s'il le souhaite (pour se connecter par email aussi)
     if (newPassword) {
       const hashedNewPassword = await bcrypt.hash(newPassword, 10);
       await pool.execute('UPDATE utilisateurs SET mot_de_passe = ? WHERE id = ?', [hashedNewPassword, userId]);
