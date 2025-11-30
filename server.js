@@ -15,7 +15,8 @@ const mainRouter = require('./src/routes');
 const clientController = require('./src/controllers/clientController');
 const pool = require('./src/config/db');
 const publicRoutes = require('./src/routes/publicRoutes');
-
+// --- AJOUT : Import du service de nettoyage ---
+const initCleanupJob = require('./src/services/cleanupService'); 
 // --- Initialisation d'Express et du serveur HTTP ---
 const app = express();
 const server = http.createServer(app);
@@ -301,6 +302,11 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
+
+// ======================================================
+// --- LANCEMENT DU CRON JOB ---
+// ======================================================
+initCleanupJob(); // <--- C'est cette ligne qui active le nettoyage automatique
 
 // --- DÉMARRAGE DU SERVEUR ---
 const PORT = process.env.PORT || process.env.API_PORT || 5000;

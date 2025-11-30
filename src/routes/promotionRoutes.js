@@ -12,7 +12,7 @@ const { protect } = require('../middlewares/authMiddleware');
 router.get('/', protect, promotionController.getPromotionsForUser);
 
 // GET /api/promotions/historique -> Récupère l'historique des interactions de l'utilisateur
-router.get('/historique', protect, promotionController.getPromotionsHistorique);
+router.get('/utilisateur/historique-videos', protect, promotionController.getPromotionsHistorique);
 
 // --- ROUTES SPÉCIFIQUES À L'UTILISATEUR ---
 
