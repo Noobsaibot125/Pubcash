@@ -20,13 +20,17 @@ exports.createNotification = async (utilisateurId, type, titre, contenu, donnees
  * Récupérer les notifications d'un utilisateur avec pagination
  */
 exports.getUserNotifications = async (utilisateurId, limit = 20, offset = 0) => {
+    // Forcer la conversion en entiers pour éviter l'erreur MySQL
+    const limitInt = parseInt(limit, 10);
+    const offsetInt = parseInt(offset, 10);
+
     const [rows] = await pool.execute(
         `SELECT id, type, titre, contenu, donnees, lu, date_creation
      FROM notifications
      WHERE utilisateur_id = ?
      ORDER BY date_creation DESC
      LIMIT ? OFFSET ?`,
-        [utilisateurId, limit, offset]
+        [utilisateurId, limitInt, offsetInt]
     );
 
     // Parser les données JSON
