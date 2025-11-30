@@ -1,5 +1,5 @@
 const admin = require('firebase-admin');
-const pool = require('../config/db'); // Correction: db au lieu de database
+const pool = require('../config/db');
 const notificationModel = require('../models/notificationModel');
 
 // Initialiser Firebase Admin SDK
@@ -9,7 +9,6 @@ const initializeFirebase = () => {
     if (firebaseInitialized) return;
 
     try {
-        // Vérifier si les variables d'environnement sont définies
         if (!process.env.FCM_PROJECT_ID || !process.env.FCM_PRIVATE_KEY || !process.env.FCM_CLIENT_EMAIL) {
             console.warn('⚠️ Firebase non configuré : Variables FCM manquantes dans .env');
             return;
@@ -30,7 +29,6 @@ const initializeFirebase = () => {
     }
 };
 
-// Initialiser au chargement du module
 initializeFirebase();
 
 /**
@@ -62,7 +60,6 @@ const envoyerNotificationPush = async (token, titre, contenu, donnees = {}) => {
             },
             data: {
                 ...donnees,
-                // Convertir tous les champs en string (requis par FCM)
                 click_action: 'FLUTTER_NOTIFICATION_CLICK',
             },
             android: {
@@ -82,7 +79,7 @@ const envoyerNotificationPush = async (token, titre, contenu, donnees = {}) => {
             },
         };
 
-        // Convertir les données en strings
+        // Convertir les données en strings (Requis par FCM)
         Object.keys(message.data).forEach(key => {
             if (typeof message.data[key] !== 'string') {
                 message.data[key] = JSON.stringify(message.data[key]);
@@ -90,16 +87,10 @@ const envoyerNotificationPush = async (token, titre, contenu, donnees = {}) => {
         });
 
         await admin.messaging().send(message);
-        console.log(`✅ Notification push envoyée à ${token.substring(0, 20)}...`);
+        console.log(`✅ Notification push envoyée.`);
         return true;
     } catch (error) {
         console.error('❌ Erreur envoi notification push:', error.message);
-        // Si le token est invalide, le supprimer
-        if (error.code === 'messaging/invalid-registration-token' ||
-            error.code === 'messaging/registration-token-not-registered') {
-            console.log('🗑️ Token FCM invalide, suppression...');
-            // On pourrait supprimer le token ici, mais on laisse pour l'instant
-        }
         return false;
     }
 };
@@ -131,7 +122,7 @@ exports.envoyerNotification = async (utilisateurId, type, titre, contenu, donnee
                 type,
             });
         } else {
-            console.log(`ℹ️ Pas de token FCM pour l'utilisateur ${utilisateurId}`);
+            console.log(`ℹ️ Pas de token FCM pour l'utilisateur ${utilisateurId} (Colonne push_notification vide)`);
         }
 
         return notificationId;
@@ -151,7 +142,7 @@ exports.envoyerNotificationMultiple = async (utilisateurIds, type, titre, conten
 
     try {
         await Promise.allSettled(promises);
-        console.log(`✅ Notifications envoyées à ${utilisateurIds.length} utilisateurs`);
+        console.log(`✅ Batch terminé : ${utilisateurIds.length} utilisateurs traités.`);
     } catch (error) {
         console.error('❌ Erreur envoi notifications multiples:', error);
     }
@@ -165,7 +156,7 @@ exports.sauvegarderTokenFCM = async (utilisateurId, token) => {
         'UPDATE utilisateurs SET push_notification = ? WHERE id = ?',
         [token, utilisateurId]
     );
-    console.log(`✅ Token FCM sauvegardé pour utilisateur ${utilisateurId}`);
+    console.log(`✅ Token FCM sauvegardé (DB: push_notification) pour user ${utilisateurId}`);
 };
 
 /**
@@ -178,20 +169,21 @@ exports.getUtilisateursByCommune = async (commune) => {
     );
     return rows.map(row => row.id);
 };
+
 /**
- * --- NOUVELLE FONCTION : Notifier pour une nouvelle promotion ---
- * Cible les utilisateurs selon la commune de la promotion
+ * Notifier pour une nouvelle promotion (Ciblage)
  */
 exports.notifierNouvellePromotion = async (promotionId, titrePromo, ciblageCommune, trancheAge) => {
     try {
         console.log(`📢 Préparation notif: Promo ${promotionId}, Commune: ${ciblageCommune}, Age: ${trancheAge}`);
 
-        // Construction de la requête de ciblage
+        // --- CORRECTION ICI : ON SELECTIONNE push_notification ---
         let sql = `
-            SELECT id, fcm_token 
+            SELECT id, push_notification 
             FROM utilisateurs 
             WHERE est_actif = TRUE 
             AND push_notification IS NOT NULL
+            AND push_notification != ''
         `;
         
         const params = [];
@@ -202,13 +194,11 @@ exports.notifierNouvellePromotion = async (promotionId, titrePromo, ciblageCommu
             params.push(ciblageCommune);
         }
 
-        // 2. FILTRE ÂGE (Calcul dynamique basé sur date_naissance)
+        // 2. FILTRE ÂGE
         if (trancheAge && trancheAge !== 'tous') {
             if (trancheAge === '12-17') {
-                // Entre 12 et 17 ans
                 sql += ` AND TIMESTAMPDIFF(YEAR, date_naissance, CURDATE()) BETWEEN 12 AND 17`;
             } else if (trancheAge === '18+') {
-                // 18 ans et plus
                 sql += ` AND TIMESTAMPDIFF(YEAR, date_naissance, CURDATE()) >= 18`;
             }
         }
@@ -216,19 +206,18 @@ exports.notifierNouvellePromotion = async (promotionId, titrePromo, ciblageCommu
         const [users] = await pool.execute(sql, params);
         
         if (users.length === 0) {
-            console.log('ℹ️ Aucun utilisateur ne correspond aux critères de ciblage.');
+            console.log('ℹ️ Aucun utilisateur ne correspond aux critères de ciblage (ou pas de token).');
             return;
         }
 
         const userIds = users.map(u => u.id);
         console.log(`🎯 Cibles trouvées : ${userIds.length} utilisateurs.`);
 
-        // 3. Envoyer la notification
         await exports.envoyerNotificationMultiple(
             userIds,
             'nouvelle_promo',
             'Nouvelle Vidéo Disponible ! 🎥',
-            `Une promotion a été créée pour votre commune ! Regardez "${titrePromo}" maintenant.`,
+            `Une promotion a été créée ! Regardez "${titrePromo}" maintenant.`,
             { 
                 promotion_id: promotionId.toString(),
                 screen: 'home'
@@ -238,18 +227,4 @@ exports.notifierNouvellePromotion = async (promotionId, titrePromo, ciblageCommu
     } catch (error) {
         console.error('❌ Erreur critique notifierNouvellePromotion:', error);
     }
-};
-/**
- * Récupérer tous les utilisateurs de plusieurs communes
- */
-exports.getUtilisateursByCommunes = async (communes) => {
-    if (!communes || communes.length === 0) return [];
-
-    const placeholders = communes.map(() => '?').join(',');
-    const [rows] = await pool.execute(
-        `SELECT id FROM utilisateurs 
-     WHERE commune_choisie IN (${placeholders}) AND est_actif = TRUE`,
-        communes
-    );
-    return rows.map(row => row.id);
 };
