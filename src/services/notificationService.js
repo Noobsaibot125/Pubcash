@@ -182,37 +182,56 @@ exports.getUtilisateursByCommune = async (commune) => {
  * --- NOUVELLE FONCTION : Notifier pour une nouvelle promotion ---
  * Cible les utilisateurs selon la commune de la promotion
  */
-exports.notifierNouvellePromotion = async (promotionId, titrePromo, ciblageCommune) => {
+exports.notifierNouvellePromotion = async (promotionId, titrePromo, ciblageCommune, trancheAge) => {
     try {
-        let userIds = [];
+        console.log(`📢 Préparation notif: Promo ${promotionId}, Commune: ${ciblageCommune}, Age: ${trancheAge}`);
 
-        // 1. Sélectionner les utilisateurs cibles
-        if (!ciblageCommune || ciblageCommune === 'toutes' || ciblageCommune === 'toutes_communes') {
-            // Cas 1 : Tout le monde (Ciblage "Toutes")
-            const [rows] = await pool.execute(
-                'SELECT id FROM utilisateurs WHERE est_actif = TRUE AND push_notification IS NOT NULL'
-            );
-            userIds = rows.map(r => r.id);
-            console.log(`📢 Diffusion globale : ${userIds.length} utilisateurs trouvés.`);
-        } else {
-            // Cas 2 : Commune spécifique (Ciblage "ma_commune" qui contient le nom de la commune ici)
-            // Note: Dans createPromotion, ciblage_commune contient le nom de la commune (ex: 'Yopougon') ou 'toutes'
-            userIds = await exports.getUtilisateursByCommune(ciblageCommune);
-            console.log(`📢 Diffusion ciblée (${ciblageCommune}) : ${userIds.length} utilisateurs trouvés.`);
+        // Construction de la requête de ciblage
+        let sql = `
+            SELECT id, fcm_token 
+            FROM utilisateurs 
+            WHERE est_actif = TRUE 
+            AND push_notification IS NOT NULL
+        `;
+        
+        const params = [];
+
+        // 1. FILTRE COMMUNE
+        if (ciblageCommune && ciblageCommune !== 'toutes' && ciblageCommune !== 'toutes_communes') {
+            sql += ` AND commune_choisie = ?`;
+            params.push(ciblageCommune);
         }
 
-        if (userIds.length === 0) return;
+        // 2. FILTRE ÂGE (Calcul dynamique basé sur date_naissance)
+        if (trancheAge && trancheAge !== 'tous') {
+            if (trancheAge === '12-17') {
+                // Entre 12 et 17 ans
+                sql += ` AND TIMESTAMPDIFF(YEAR, date_naissance, CURDATE()) BETWEEN 12 AND 17`;
+            } else if (trancheAge === '18+') {
+                // 18 ans et plus
+                sql += ` AND TIMESTAMPDIFF(YEAR, date_naissance, CURDATE()) >= 18`;
+            }
+        }
 
-        // 2. Envoyer la notification de masse
-        // On utilise ta fonction existante envoyerNotificationMultiple
+        const [users] = await pool.execute(sql, params);
+        
+        if (users.length === 0) {
+            console.log('ℹ️ Aucun utilisateur ne correspond aux critères de ciblage.');
+            return;
+        }
+
+        const userIds = users.map(u => u.id);
+        console.log(`🎯 Cibles trouvées : ${userIds.length} utilisateurs.`);
+
+        // 3. Envoyer la notification
         await exports.envoyerNotificationMultiple(
             userIds,
-            'nouvelle_promo', // Type pour redirection mobile
+            'nouvelle_promo',
             'Nouvelle Vidéo Disponible ! 🎥',
-            `Regardez "${titrePromo}" et gagnez de l'argent maintenant !`,
+            `Une promotion a été créée pour votre commune ! Regardez "${titrePromo}" maintenant.`,
             { 
                 promotion_id: promotionId.toString(),
-                screen: 'home' // Indique à Flutter d'ouvrir l'accueil
+                screen: 'home'
             }
         );
 

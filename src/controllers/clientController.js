@@ -224,7 +224,8 @@ exports.createPromotion = async (req, res) => {
         notificationService.notifierNouvellePromotion(
             insertedPromotionId, 
             titre, 
-            ciblage_commune // Contiendra 'toutes' ou le nom de la commune
+            ciblage_commune, // ex: 'Yopougon' ou 'toutes'
+            tranche_age      // ex: '12-17', '18+' ou 'tous'
         ).catch(err => console.error("Erreur background notification:", err));
         // ============================================================
 
