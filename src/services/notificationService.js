@@ -177,7 +177,7 @@ exports.notifierNouvellePromotion = async (promotionId, titrePromo, ciblageCommu
     try {
         console.log(`📢 Préparation notif: Promo ${promotionId}, Commune: ${ciblageCommune}, Age: ${trancheAge}`);
 
-        // --- CORRECTION ICI : ON SELECTIONNE push_notification ---
+        // On sélectionne push_notification
         let sql = `
             SELECT id, push_notification 
             FROM utilisateurs 
@@ -188,9 +188,10 @@ exports.notifierNouvellePromotion = async (promotionId, titrePromo, ciblageCommu
         
         const params = [];
 
-        // 1. FILTRE COMMUNE
+        // 1. FILTRE COMMUNE (CORRIGÉ AVEC LOWER)
         if (ciblageCommune && ciblageCommune !== 'toutes' && ciblageCommune !== 'toutes_communes') {
-            sql += ` AND commune_choisie = ?`;
+            // On force la comparaison en minuscule des deux côtés pour éviter les erreurs "Abobo" vs "abobo"
+            sql += ` AND LOWER(commune_choisie) = LOWER(?)`; 
             params.push(ciblageCommune);
         }
 
@@ -206,18 +207,18 @@ exports.notifierNouvellePromotion = async (promotionId, titrePromo, ciblageCommu
         const [users] = await pool.execute(sql, params);
         
         if (users.length === 0) {
-            console.log('ℹ️ Aucun utilisateur ne correspond aux critères de ciblage (ou pas de token).');
+            console.log(`ℹ️ Aucun utilisateur trouvé pour ${ciblageCommune} (ou pas de token).`);
             return;
         }
 
         const userIds = users.map(u => u.id);
-        console.log(`🎯 Cibles trouvées : ${userIds.length} utilisateurs.`);
+        console.log(`🎯 Cibles trouvées : ${userIds.length} utilisateurs à ${ciblageCommune}.`);
 
         await exports.envoyerNotificationMultiple(
             userIds,
             'nouvelle_promo',
             'Nouvelle Vidéo Disponible ! 🎥',
-            `Une promotion a été créée ! Regardez "${titrePromo}" maintenant.`,
+            `Une promotion a été créée pour votre commune ! Regardez "${titrePromo}" maintenant.`,
             { 
                 promotion_id: promotionId.toString(),
                 screen: 'home'
