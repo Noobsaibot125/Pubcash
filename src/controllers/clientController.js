@@ -114,12 +114,11 @@ exports.createPromotion = async (req, res) => {
     const clientId = req.user.id;
     let { titre, description, url_video, budget, duree_secondes, thumbnail_url, tranche_age, ciblage_commune } = req.body;
     
-    // VALIDATION DES NOUVEAUX CHAMPS
+    // Validation
     if (!tranche_age || !ciblage_commune) {
         return res.status(400).json({ message: 'Les tranches d\'âge et le ciblage par commune sont requis.' });
     }
     
-    // Convertir les valeurs potentiellement undefined en null
     url_video = url_video || null;
     thumbnail_url = thumbnail_url || null;
     description = description || null;
@@ -128,7 +127,7 @@ exports.createPromotion = async (req, res) => {
     try {
         await connection.beginTransaction();
 
-        // 1) récupérer le pack correspondant à la durée (et sa rémunération)
+        // 1) Récupérer le pack
         const [packs] = await connection.execute(
             'SELECT id, remuneration FROM packs WHERE ? >= duree_min_secondes AND ? <= duree_max_secondes',
             [duree_secondes, duree_secondes]
@@ -141,26 +140,41 @@ exports.createPromotion = async (req, res) => {
         const packId = pack.id;
         const remunerationParVue = Number(pack.remuneration || 0);
 
-        // 2) verrouiller le client et vérifier le solde
-        const [rows] = await connection.execute('SELECT solde_recharge FROM clients WHERE id = ? FOR UPDATE', [clientId]);
+        // 2) Verrouiller le client et récupérer son SOLDE et sa COMMUNE
+        // MODIFICATION : On récupère explicitement la 'commune' ici
+        const [rows] = await connection.execute('SELECT solde_recharge, commune FROM clients WHERE id = ? FOR UPDATE', [clientId]);
         const client = rows[0];
+        
         if (!client || Number(client.solde_recharge) < Number(budget)) {
             await connection.rollback();
             return res.status(400).json({ message: 'Solde insuffisant pour créer cette promotion.' });
         }
 
-        // 3) débiter le client
+        // --- LOGIQUE DE CIBLAGE MODIFIÉE ---
+        // Si le frontend envoie 'ma_commune', on remplace par le nom réel de la commune du client (ex: 'Yopougon')
+        // Si le frontend envoie 'toutes', on garde 'toutes'
+        let finalCiblageCommune = ciblage_commune;
+        
+        if (ciblage_commune === 'ma_commune') {
+            if (!client.commune) {
+                await connection.rollback();
+                return res.status(400).json({ message: 'Veuillez renseigner votre commune dans votre profil avant de créer une promotion locale.' });
+            }
+            finalCiblageCommune = client.commune; // Ex: "Yopougon"
+        }
+        // -----------------------------------
+
+        // 3) Débiter le client
         const newBalance = Math.round((Number(client.solde_recharge) - Number(budget)) * 100) / 100;
         await connection.execute('UPDATE clients SET solde_recharge = ? WHERE id = ?', [newBalance, clientId]);
 
-        // 4) calculer la commission admin (15%) et arrondir à 2 décimales
+        // 4) Calculs commissions
         const commission = Math.round((Number(budget) * 0.15) * 100) / 100;
-
-        // 5) calculer budget réel pour vues et vues potentielles
         const budgetReelPourVues = Math.round((Number(budget) - commission) * 100) / 100;
         const vuesPotentielles = remunerationParVue > 0 ? Math.floor(budgetReelPourVues / remunerationParVue) : 0;
 
-        // 6) insérer la promotion (avec commission_pubcash)
+        // 5) Insérer la promotion
+        // MODIFICATION : On insère finalCiblageCommune
         const [result] = await connection.execute(
             `INSERT INTO promotions (
                 id_client, titre, description, url_video, thumbnail_url, duree_secondes, 
@@ -168,66 +182,41 @@ exports.createPromotion = async (req, res) => {
                 vues_potentielles, tranche_age, ciblage_commune
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
-                clientId, 
-                titre, 
-                description,
-                url_video, 
-                thumbnail_url, 
-                duree_secondes, 
-                packId, 
-                Number(budget), 
-                Number(budget), 
-                'en_cours', 
-                commission, 
-                vuesPotentielles, 
-                tranche_age, 
-                ciblage_commune
+                clientId, titre, description, url_video, thumbnail_url, duree_secondes, 
+                packId, Number(budget), Number(budget), 'en_cours', commission, 
+                vuesPotentielles, tranche_age, finalCiblageCommune
             ]
         );
 
         const insertedPromotionId = result.insertId;
 
-        // 7) assurer l'existence d'une ligne portefeuille_admin (si absente) et verrouiller
+        // 6) Gestion Portefeuille Admin (inchangé)
         await connection.execute(
-          `INSERT INTO portefeuille_admin (id, solde)
-           SELECT 1, 0
-           WHERE NOT EXISTS (SELECT 1 FROM portefeuille_admin WHERE id = 1)`
+          `INSERT INTO portefeuille_admin (id, solde) SELECT 1, 0 WHERE NOT EXISTS (SELECT 1 FROM portefeuille_admin WHERE id = 1)`
         );
-
         const [walletRows] = await connection.execute('SELECT solde FROM portefeuille_admin WHERE id = 1 FOR UPDATE');
         if (walletRows.length === 0) {
-            // Au cas improbable où la ligne n'existerait toujours pas, on la crée explicitement
             await connection.execute('INSERT INTO portefeuille_admin (id, solde) VALUES (?, ?)', [1, commission]);
         } else {
-            // 8) mettre à jour le solde du portefeuille admin
             await connection.execute('UPDATE portefeuille_admin SET solde = solde + ? WHERE id = 1', [commission]);
         }
 
-        // 9) inscrire une ligne d'historique dans admin_portefeuille_history (optionnel mais recommandé)
-        // Assure-toi d'avoir créé la table admin_portefeuille_history (si non, tu peux l'ajouter via migration).
+        // Historique admin (inchangé)
         try {
           await connection.execute(
             'INSERT INTO admin_portefeuille_history (id_promotion, montant, type_operation, description) VALUES (?, ?, ?, ?)',
             [insertedPromotionId, commission, 'credit', 'Commission sur création de promotion']
           );
         } catch (histErr) {
-          // Si la table d'historique n'existe pas, on ignore l'erreur (ne bloque pas la création)
-          console.warn('admin_portefeuille_history insert failed (table manquante ?):', histErr.message || histErr);
+          console.warn('admin_portefeuille_history insert failed:', histErr.message);
         }
 
         await connection.commit();
-          // ============================================================
-        // === AJOUT : DÉCLENCHER LA NOTIFICATION ===
-        // ============================================================
-        // On ne met pas 'await' pour ne pas faire attendre le client 
-        // si l'envoi des notifs prend du temps (fire & forget)
+
+        // Notification (inchangé)
         notificationService.notifierNouvellePromotion(
-            insertedPromotionId, 
-            titre, 
-            ciblage_commune, // ex: 'Yopougon' ou 'toutes'
-            tranche_age      // ex: '12-17', '18+' ou 'tous'
+            insertedPromotionId, titre, finalCiblageCommune, tranche_age
         ).catch(err => console.error("Erreur background notification:", err));
-        // ============================================================
 
         res.status(201).json({ 
             message: 'Promotion créée avec succès !', 
@@ -248,13 +237,19 @@ exports.createPromotion = async (req, res) => {
 // pubcash-api/src/controllers/clientController.js
 exports.getClientPromotions = async (req, res) => {
   const clientId = req.user.id;
+  // Le filtre vient du frontend (ex: 'ma_commune' ou 'toutes_communes' ou 'toutes_mes_promotions')
   const filter = req.query.filter || 'toutes_mes_promotions';
 
   try {
+      // On a besoin de connaître la commune du client pour appliquer le filtre 'ma_commune'
+      // car en base, ce n'est plus écrit 'ma_commune' mais 'Yopougon'.
+      const [clientRows] = await pool.execute('SELECT commune FROM clients WHERE id = ?', [clientId]);
+      const clientCommune = clientRows[0]?.commune;
+
       let query = `
           SELECT 
               p.id, p.titre, p.url_video, p.statut, p.budget_initial, p.budget_restant, 
-              p.vues, p.likes, p.partages, p.thumbnail_url, p.ciblage_commune,
+              p.vues, p.likes, p.partages, p.thumbnail_url, p.ciblage_commune, p.tranche_age,
               pk.nom_pack
            FROM promotions p
            LEFT JOIN packs pk ON p.id_pack = pk.id
@@ -263,28 +258,33 @@ exports.getClientPromotions = async (req, res) => {
       
       const params = [clientId];
 
-      // La logique de filtre reste la même
+      // --- LOGIQUE DE FILTRE MISE À JOUR ---
       if (filter === 'ma_commune') {
-          query += ` AND p.ciblage_commune = 'ma_commune'`;
+          // On affiche les promos qui ont pour cible EXACTEMENT la commune du client
+          if (clientCommune) {
+            query += ` AND p.ciblage_commune = ?`;
+            params.push(clientCommune);
+          } else {
+            // Si le client n'a pas de commune définie, ce filtre ne retourne rien
+            query += ` AND 1=0`; 
+          }
       } else if (filter === 'toutes_communes') {
+          // On affiche celles qui ciblent 'toutes'
           query += ` AND p.ciblage_commune = 'toutes'`;
       }
+      // Si 'toutes_mes_promotions', on ne filtre pas le ciblage
 
       query += ` ORDER BY p.date_creation DESC`;
 
       const [promotions] = await pool.execute(query, params);
       
-      // --- CORRECTION DE LA CONSTRUCTION DES URLs ---
-      // On définit l'URL de base du serveur, ex: http://localhost:5000
+      // Construction des URLs (inchangé)
       const baseUrl = `${req.protocol}://${req.get('host')}`; 
-
       const promotionsWithFullUrls = promotions.map(promo => {
-        // Pour les thumbnails
         const finalThumbUrl = promo.thumbnail_url && !promo.thumbnail_url.startsWith('http')
           ? `${baseUrl}/uploads/thumbnails/${encodeURIComponent(promo.thumbnail_url)}`
           : promo.thumbnail_url;
       
-        // Pour les vidéos
         const finalVideoUrl = promo.url_video && !promo.url_video.startsWith('http')
           ? `${baseUrl}/uploads/videos/${encodeURIComponent(promo.url_video)}`
           : promo.url_video;
@@ -295,7 +295,6 @@ exports.getClientPromotions = async (req, res) => {
           url_video: finalVideoUrl,
         };
       });
-      // --- FIN DE LA CORRECTION ---
 
       res.status(200).json(promotionsWithFullUrls);
 

@@ -9,24 +9,22 @@ const { URLSearchParams } = require('url');
 const notificationService = require('../services/notificationService');
 exports.getPromotionsForUser = async (req, res) => {
   const userId = req.user.id;
-  const userCommune = req.user.commune_choisie || null;
-  const filter = req.query.filter || 'ma_commune';
+  // userCommune correspond à 'commune_choisie' dans la table utilisateurs
+  const userCommune = req.user.commune_choisie || null; 
+  const filter = req.query.filter || 'ma_commune'; // Filtre venant de l'UI utilisateur
 
   try {
-    // 1. Récupération des infos utilisateur pour l'âge
+    // 1. Récupération âge
     const [userData] = await pool.execute('SELECT date_naissance FROM utilisateurs WHERE id = ?', [userId]);
     if (!userData.length || !userData[0].date_naissance) {
       return res.status(403).json({ message: "Votre profil est incomplet (date de naissance manquante)." });
     }
-
     const user = userData[0];
     const birthDate = new Date(user.date_naissance);
     const age = new Date(Date.now() - birthDate.getTime()).getUTCFullYear() - 1970;
 
     const params = [];
 
-    // 2. Initialisation de la requête
-    // On joint la table 'packs' (alias pk) pour pouvoir filtrer sur pk.remuneration
     let query = `
           SELECT 
               p.*, 
@@ -34,13 +32,8 @@ exports.getPromotionsForUser = async (req, res) => {
               c.commune as client_commune,
               pk.remuneration AS remuneration_pack,
               pk.nom_pack,
-              g.id as game_id,
-              g.type as game_type,
-              g.points_recompense,
-              -- AJOUT DES CHAMPS MANQUANTS ICI :
-              g.question,
-              g.reponses,
-              g.bonne_reponse
+              g.id as game_id, g.type as game_type, g.points_recompense,
+              g.question, g.reponses, g.bonne_reponse
           FROM promotions p
           JOIN clients c ON p.id_client = c.id
           JOIN packs pk ON p.id_pack = pk.id
@@ -48,37 +41,47 @@ exports.getPromotionsForUser = async (req, res) => {
           WHERE p.statut = 'en_cours' 
             AND p.budget_restant > 0
             
+            -- FILTRE ÂGE (INCHANGÉ)
             AND (
                 p.tranche_age = 'tous'
                 OR (p.tranche_age = '12-17' AND ? BETWEEN 12 AND 17)
                 OR (p.tranche_age = '18+' AND ? >= 18)
             )
+            
+            -- NOUVEAU FILTRE CIBLAGE COMMUNE
+            -- 1. Si la promo cible 'toutes', tout le monde la voit.
+            -- 2. Si la promo cible une commune spécifique (ex: 'Yopougon'), seul l'user de 'Yopougon' la voit.
+            AND (
+                p.ciblage_commune = 'toutes' 
+                OR p.ciblage_commune = ?
+            )
     `;
     
-    params.push(age, age);
+    // Paramètres pour l'âge et la commune
+    params.push(age, age, userCommune);
 
-    // --- 3. LOGIQUE DE FILTRAGE SUR LA RÉMUNÉRATION (CORRIGÉE) ---
-    
+    // --- FILTRES SUPPLÉMENTAIRES (UI) ---
+    // Si l'utilisateur clique sur "Ma Commune" dans l'appli, il veut voir SEULEMENT les promos de sa commune
+    // et pas celles qui sont nationales ('toutes').
     if (filter === 'ma_commune' && userCommune) {
-       // Filtre géographique
-       query += ` AND (p.ciblage_commune = 'toutes' OR (p.ciblage_commune = 'ma_commune' AND c.commune = ?))`;
-       params.push(userCommune);
+        query += ` AND p.ciblage_commune = ?`;
+        params.push(userCommune);
     } 
+    // Si l'utilisateur veut voir tout ce qui est disponible pour lui (National + Local)
+    else if (filter === 'toutes') {
+        // Pas de restriction supplémentaire, la clause WHERE de base suffit
+    }
     else if (filter === 'argent') {
-       // Selon ton image BDD : Pack ID 1 (Agent) = 50 FCFA
        query += ` AND pk.remuneration = 50`;
     }
     else if (filter === 'gold') {
-       // Selon ton image BDD : Pack ID 2 (Gold) = 75 FCFA
        query += ` AND pk.remuneration = 75`;
     }
     else if (filter === 'diamant') {
-       // Selon ton image BDD : Pack ID 3 (Diamant) = 100 FCFA
        query += ` AND pk.remuneration = 100`;
     }
-    // Si filter === 'toutes', on ne met aucune condition supplémentaire ici.
 
-    // 4. Exclusion des vues déjà faites
+    // Exclusion des vues déjà faites (inchangé)
     query += ` AND NOT EXISTS (
         SELECT 1 FROM interactions i 
         WHERE i.id_promotion = p.id 
@@ -91,7 +94,7 @@ exports.getPromotionsForUser = async (req, res) => {
 
     const [promotions] = await pool.execute(query, params);
 
-    // Formatage des URLs (inchangé)
+    // Formatage (inchangé)
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     const promotionsWithUrls = promotions.map(promo => ({
       ...promo,
@@ -121,26 +124,29 @@ const handleInteraction = async (req, res, interactionType) => {
   try {
     await connection.beginTransaction();
 
-    // =====================================================================
-    // ÉTAPE 1 (AJOUT CRUCIAL) : VÉRIFIER L'ÉLIGIBILITÉ DE L'UTILISATEUR
-    // =====================================================================
+    // VÉRIFICATION D'ÉLIGIBILITÉ (MISE A JOUR)
+    // On vérifie que l'utilisateur a le droit d'interagir avec cette pub
+    // selon son âge ET sa commune.
     const eligibilityQuery = `
-      SELECT p.id
+      SELECT p.id, p.ciblage_commune
       FROM promotions p
-      JOIN clients c ON p.id_client = c.id
       JOIN utilisateurs u ON u.id = ?
       WHERE 
         p.id = ?
         AND p.statut = 'en_cours'
         AND p.budget_restant > 0
+        -- Check Age
         AND (
             p.tranche_age = 'tous'
             OR (p.tranche_age = '12-17' AND TIMESTAMPDIFF(YEAR, u.date_naissance, CURDATE()) BETWEEN 12 AND 17)
             OR (p.tranche_age = '18+' AND TIMESTAMPDIFF(YEAR, u.date_naissance, CURDATE()) >= 18)
         )
+        -- Check Commune (NOUVEAU)
+        -- Soit la pub est pour tout le monde ('toutes')
+        -- Soit la pub cible la commune exacte de l'utilisateur
         AND (
             p.ciblage_commune = 'toutes'
-            OR (p.ciblage_commune = 'ma_commune' AND c.commune = u.commune_choisie)
+            OR p.ciblage_commune = u.commune_choisie
         )
     `;
 
@@ -148,10 +154,8 @@ const handleInteraction = async (req, res, interactionType) => {
 
     if (eligiblePromo.length === 0) {
       await connection.rollback();
-      // Si l'utilisateur n'est pas éligible, on bloque l'action avec une erreur 403.
-      return res.status(403).json({ message: 'Vous n\'êtes pas éligible pour interagir avec cette promotion.' });
+      return res.status(403).json({ message: 'Vous n\'êtes pas éligible pour interagir avec cette promotion (restriction géographique ou d\'âge).' });
     }
-
     // =====================================================================
     // ÉTAPE 2 : Vérifier si l'interaction est un doublon
     // =====================================================================
