@@ -1,34 +1,23 @@
+// src/routes/notificationRoutes.js
 const express = require('express');
 const router = express.Router();
 const notificationController = require('../controllers/notificationController');
+const { protect } = require('../middlewares/authMiddleware');
 
-// --- CORRECTION ---
-// 1. On garde UNIQUEMENT 'protect' (car c'est le nom dans ton export)
-const { protect } = require('../middlewares/authMiddleware'); 
+// Middleware de protection pour toutes les routes
+router.use(protect);
 
-// 2. On utilise 'protect' ici pour sécuriser les routes
-router.use(protect); 
-// ------------------
-
-// GET /api/notifications - Récupérer les notifications
+// --- ROUTES ---
 router.get('/', notificationController.getNotifications);
-
-// GET /api/notifications/non-lues/count - Nombre de notifications non lues
 router.get('/non-lues/count', notificationController.getNombreNonLues);
-
-// PATCH /api/notifications/:id/lire - Marquer une notification comme lue
 router.patch('/:id/lire', notificationController.marquerCommeLue);
-
-// PATCH /api/notifications/lire-toutes - Marquer toutes comme lues
 router.patch('/lire-toutes', notificationController.marquerToutesCommeLues);
-
-// DELETE /api/notifications/:id - Supprimer une notification
 router.delete('/:id', notificationController.supprimerNotification);
 
-// POST /api/notifications/token - Sauvegarder le token FCM
+// C'est la route cruciale
 router.post('/token', notificationController.sauvegarderToken);
 
-// POST /api/notifications/test - Envoyer une notification de test (DEV)
+// Route de test (Dev uniquement)
 if (process.env.NODE_ENV !== 'production') {
     router.post('/test', notificationController.testNotification);
 }

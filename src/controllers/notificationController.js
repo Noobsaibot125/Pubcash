@@ -129,32 +129,31 @@ exports.supprimerNotification = async (req, res) => {
  * Sauvegarder le token FCM de l'utilisateur
  */
 exports.sauvegarderToken = async (req, res) => {
+    // 1. On logue que la requête est arrivée
+    console.log("📡 [BACKEND] Reçu requête POST /notifications/token");
+    console.log("👤 [BACKEND] Utilisateur ID:", req.user ? req.user.id : 'Non identifié');
+    console.log("📦 [BACKEND] Body:", req.body);
+
     try {
         const utilisateurId = req.user.id;
         const { token } = req.body;
 
         if (!token) {
-            return res.status(400).json({
-                success: false,
-                message: 'Le token FCM est requis',
-            });
+            console.log("⚠️ [BACKEND] Token manquant dans le body !");
+            return res.status(400).json({ success: false, message: 'Le token FCM est requis' });
         }
 
+        // Appel au service
         await notificationService.sauvegarderTokenFCM(utilisateurId, token);
+        
+        console.log(`✅ [BACKEND] Token sauvegardé avec succès pour User ${utilisateurId}`);
 
-        res.json({
-            success: true,
-            message: 'Token FCM sauvegardé avec succès',
-        });
+        res.json({ success: true, message: 'Token FCM sauvegardé' });
     } catch (error) {
-        console.error('Erreur sauvegarde token:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Erreur lors de la sauvegarde du token',
-        });
+        console.error('❌ [BACKEND] Erreur sauvegarde token:', error);
+        res.status(500).json({ success: false, message: 'Erreur serveur' });
     }
 };
-
 /**
  * Endpoint de test pour envoyer une notification manuellement (DEV ONLY)
  */
