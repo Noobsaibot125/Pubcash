@@ -15,10 +15,30 @@ const spinWheelLogic = () => {
 // --- CONTROLLERS ---
 
 exports.getPoints = async (req, res) => {
+    const userId = req.user.id;
+    const today = new Date().toISOString().split('T')[0]; // Date du jour
+
     try {
-        const [rows] = await pool.execute('SELECT points FROM utilisateurs WHERE id = ?', [req.user.id]);
+        // On récupère les points ET si la roue a été tournée aujourd'hui
+        // On utilise LEFT JOIN pour vérifier l'activité du jour même si elle n'existe pas encore
+        const query = `
+            SELECT u.points, 
+                   COALESCE(da.daily_wheel_spun, 0) as wheel_spun
+            FROM utilisateurs u
+            LEFT JOIN daily_activity da ON u.id = da.user_id AND da.date = ?
+            WHERE u.id = ?
+        `;
+        
+        const [rows] = await pool.execute(query, [today, userId]);
+
         if (rows.length === 0) return res.status(404).json({ message: 'Utilisateur non trouvé' });
-        res.status(200).json({ points: rows[0].points });
+
+        // On renvoie les points ET le booléen (converti en true/false)
+        res.status(200).json({ 
+            points: rows[0].points,
+            wheel_spun: !!rows[0].wheel_spun 
+        });
+
     } catch (error) {
         console.error('Erreur getPoints:', error);
         res.status(500).json({ message: 'Erreur serveur' });
