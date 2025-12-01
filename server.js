@@ -116,22 +116,22 @@ app.post('/api/callbacks/cinetpay/withdrawal', async (req, res) => {
   try {
     console.log('🔔 Webhook CinetPay Retrait reçu:', JSON.stringify(req.body, null, 2));
     
-    const { client_transaction_id, status, message } = req.body;
+    // On utilise treatment_status (VAL, ERR, NEW, CAN)
+    const { client_transaction_id, treatment_status, message } = req.body;
     
     if (client_transaction_id) {
-      let statut = 'en_cours';
+      let statut = 'en_cours'; // Par défaut si non géré
       
-      if (status === 'SUCCESS') {
-        statut = 'traite';
-        console.log(`✅ Retrait ${client_transaction_id} réussi`);
-      } else if (status === 'FAILED') {
-        statut = 'rejete';
-        console.log(`❌ Retrait ${client_transaction_id} échoué: ${message}`);
+      // Mappage des statuts CinetPay Transfert
+      if (treatment_status === 'VAL') { 
+        statut = 'traite'; // ✅ Succès définitif
+      } else if (treatment_status === 'ERR' || treatment_status === 'CAN') {
+        statut = 'rejete'; // ❌ Échec ou Annulé
         
-        // Restaurer le solde utilisateur en cas d'échec
+        // Restauration du solde utilisateur en cas d'échec
         try {
           const [demandeRows] = await pool.execute(
-            'SELECT id_utilisateur, montant FROM demandes_retrait WHERE transaction_id = ?',
+            'SELECT id_utilisateur, montant FROM demandes_retrait WHERE transaction_id = ? AND statut = "en_cours"',
             [client_transaction_id]
           );
           
@@ -148,7 +148,7 @@ app.post('/api/callbacks/cinetpay/withdrawal', async (req, res) => {
         }
       }
       
-      // Mettre à jour le statut dans la base de données
+      // Mise à jour du statut dans la base de données
       await pool.execute(
         'UPDATE demandes_retrait SET statut = ?, date_traitement = NOW() WHERE transaction_id = ?',
         [statut, client_transaction_id]
