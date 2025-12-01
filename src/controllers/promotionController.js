@@ -82,11 +82,11 @@ exports.getPromotionsForUser = async (req, res) => {
     }
 
     // Exclusion des vues déjà faites (inchangé)
-    query += ` AND NOT EXISTS (
+   query += ` AND NOT EXISTS (
         SELECT 1 FROM interactions i 
         WHERE i.id_promotion = p.id 
         AND i.id_utilisateur = ? 
-        AND i.type_interaction = 'vue'
+        AND i.type_interaction IN ('vue', 'annulé') 
     )`;
     params.push(userId);
 
@@ -315,27 +315,57 @@ exports.addComment = async (req, res) => {
 exports.viewPromotion = async (req, res) => {
   const { promotionId } = req.params;
   const userId = req.user.id;
+  // 1. On récupère le device_id envoyé par Flutter
+  const { device_id } = req.body; 
+
   const connection = await pool.getConnection();
 
-  // Log de début
-  console.log(`\n--- [DEBUG] Début viewPromotion pour User ${userId} / Promo ${promotionId} ---`);
+  console.log(`\n--- [DEBUG] Début viewPromotion pour User ${userId} / Promo ${promotionId} / Device ${device_id} ---`);
 
   try {
     await connection.beginTransaction();
 
-    // 1) Vérifier si une 'vue' a déjà été enregistrée
+    // =========================================================================
+    // <<< AJOUT SECURITE : VERIFICATION DU DEVICE ID >>>
+    // =========================================================================
+    if (device_id) {
+        // On vérifie si CET appareil a déjà validé UNE VUE pour CETTE promotion
+        // peu importe quel utilisateur était connecté.
+        const [deviceCheck] = await connection.execute(
+            `SELECT id FROM interactions 
+             WHERE id_promotion = ? 
+             AND type_interaction = 'vue' 
+             AND device_id = ?`,
+            [promotionId, device_id]
+        );
+
+        if (deviceCheck.length > 0) {
+            console.log(`[DEBUG] 🚫 Fraude détectée : Cet appareil (${device_id}) a déjà vu cette pub.`);
+            await connection.rollback();
+            return res.status(403).json({ 
+                message: 'Cet appareil a déjà bénéficié de cette offre promotionnelle.' 
+            });
+        }
+    } else {
+        console.log(`[DEBUG] ⚠️ Attention : Aucun device_id reçu !`);
+        // Optionnel : Tu peux refuser la vue si pas de device_id pour être strict
+        // return res.status(400).json({ message: "Identification de l'appareil impossible." });
+    }
+    // =========================================================================
+
+
+    // 2) Vérifier si l'utilisateur actuel a déjà vu (Doublon User)
     const [existing] = await connection.execute(
       'SELECT id FROM interactions WHERE id_utilisateur = ? AND id_promotion = ? AND type_interaction = ?',
       [userId, promotionId, 'vue']
     );
 
     if (existing.length > 0) {
-      console.log(`[DEBUG] ❌ Vue déjà existante. Arrêt du traitement.`);
       await connection.rollback();
-      return res.status(200).json({ message: 'Vue déjà comptabilisée.' });
+      return res.status(200).json({ message: 'Vue déjà comptabilisée pour cet utilisateur.' });
     }
 
-    // 2) Récupérer les infos de la promotion
+    // 3) Récupérer les infos de la promotion
     const [promoRows] = await connection.execute(
       `SELECT p.id, p.budget_restant, p.vues, p.vues_potentielles, p.id_pack, pk.remuneration
          FROM promotions p
@@ -346,16 +376,14 @@ exports.viewPromotion = async (req, res) => {
 
     const promotion = promoRows[0];
     if (!promotion) {
-      console.log(`[DEBUG] ❌ Promotion introuvable ou terminée.`);
       await connection.rollback();
       return res.status(404).json({ message: 'Promotion non trouvée ou terminée.' });
     }
 
     const montant = Number(promotion.remuneration || 0);
 
-    // 3) Vérifier budget
+    // 4) Vérifier budget
     if (promotion.budget_restant < montant) {
-      console.log(`[DEBUG] ❌ Budget épuisé.`);
       await connection.execute(
         'UPDATE promotions SET statut = ?, date_fin = NOW() WHERE id = ?',
         ['termine', promotionId]
@@ -365,11 +393,11 @@ exports.viewPromotion = async (req, res) => {
       return res.status(400).json({ message: 'Budget de la promotion épuisé.' });
     }
 
-    // 4) Enregistrer la vue
-    console.log(`[DEBUG] ✅ Enregistrement interaction "vue"...`);
+    // 5) Enregistrer la vue AVEC LE DEVICE ID
+    console.log(`[DEBUG] ✅ Enregistrement interaction "vue" avec Device ID...`);
     await connection.execute(
-      'INSERT INTO interactions (id_utilisateur, id_promotion, type_interaction) VALUES (?, ?, ?)',
-      [userId, promotionId, 'vue']
+      'INSERT INTO interactions (id_utilisateur, id_promotion, type_interaction, device_id) VALUES (?, ?, ?, ?)',
+      [userId, promotionId, 'vue', device_id] // <-- On insère le device_id ici
     );
 
     // 5) Update Promotion
@@ -948,6 +976,35 @@ exports.getPromotionById = async (req, res) => {
 
   } catch (error) {
     console.error("Erreur getPromotionById:", error);
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
+};
+// --- NOUVELLE FONCTION : ANNULER / MASQUER UNE PROMOTION ---
+exports.cancelPromotion = async (req, res) => {
+  const { promotionId } = req.params;
+  const userId = req.user.id;
+
+  try {
+    // 1. Vérifier si l'interaction existe déjà pour éviter les doublons
+    const [existing] = await pool.execute(
+      'SELECT id FROM interactions WHERE id_utilisateur = ? AND id_promotion = ? AND type_interaction = ?',
+      [userId, promotionId, 'annulé']
+    );
+
+    if (existing.length > 0) {
+      return res.status(200).json({ message: 'Promotion déjà annulée.' });
+    }
+
+    // 2. Insérer l'interaction 'annulé'
+    await pool.execute(
+      'INSERT INTO interactions (id_utilisateur, id_promotion, type_interaction) VALUES (?, ?, ?)',
+      [userId, promotionId, 'annulé']
+    );
+
+    res.status(200).json({ message: 'Promotion masquée avec succès.' });
+
+  } catch (error) {
+    console.error("Erreur cancelPromotion:", error);
     res.status(500).json({ message: 'Erreur serveur' });
   }
 };
