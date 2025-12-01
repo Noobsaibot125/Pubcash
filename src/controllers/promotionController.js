@@ -124,9 +124,7 @@ const handleInteraction = async (req, res, interactionType) => {
   try {
     await connection.beginTransaction();
 
-    // VÉRIFICATION D'ÉLIGIBILITÉ (MISE A JOUR)
-    // On vérifie que l'utilisateur a le droit d'interagir avec cette pub
-    // selon son âge ET sa commune.
+    // 1. VÉRIFICATION D'ÉLIGIBILITÉ
     const eligibilityQuery = `
       SELECT p.id, p.ciblage_commune
       FROM promotions p
@@ -135,15 +133,11 @@ const handleInteraction = async (req, res, interactionType) => {
         p.id = ?
         AND p.statut = 'en_cours'
         AND p.budget_restant > 0
-        -- Check Age
         AND (
             p.tranche_age = 'tous'
             OR (p.tranche_age = '12-17' AND TIMESTAMPDIFF(YEAR, u.date_naissance, CURDATE()) BETWEEN 12 AND 17)
             OR (p.tranche_age = '18+' AND TIMESTAMPDIFF(YEAR, u.date_naissance, CURDATE()) >= 18)
         )
-        -- Check Commune (NOUVEAU)
-        -- Soit la pub est pour tout le monde ('toutes')
-        -- Soit la pub cible la commune exacte de l'utilisateur
         AND (
             p.ciblage_commune = 'toutes'
             OR p.ciblage_commune = u.commune_choisie
@@ -154,11 +148,10 @@ const handleInteraction = async (req, res, interactionType) => {
 
     if (eligiblePromo.length === 0) {
       await connection.rollback();
-      return res.status(403).json({ message: 'Vous n\'êtes pas éligible pour interagir avec cette promotion (restriction géographique ou d\'âge).' });
+      return res.status(403).json({ message: 'Non éligible pour cette promotion.' });
     }
-    // =====================================================================
-    // ÉTAPE 2 : Vérifier si l'interaction est un doublon
-    // =====================================================================
+
+    // 2. Vérifier si l'interaction est un doublon
     const [existing] = await connection.execute(
       'SELECT id FROM interactions WHERE id_utilisateur = ? AND id_promotion = ? AND type_interaction = ?',
       [userId, promotionId, interactionType]
@@ -168,10 +161,7 @@ const handleInteraction = async (req, res, interactionType) => {
       return res.status(200).json({ message: `Interaction '${interactionType}' déjà enregistrée.` });
     }
 
-    // Si on arrive ici, l'utilisateur est éligible ET l'interaction est nouvelle.
-    // Le reste du code peut s'exécuter en toute sécurité.
-
-    // 3. Insérer l'interaction
+    // 3. Insérer l'interaction (Like ou Partage uniquement)
     await connection.execute(
       'INSERT INTO interactions (id_utilisateur, id_promotion, type_interaction) VALUES (?, ?, ?)',
       [userId, promotionId, interactionType]
@@ -181,101 +171,8 @@ const handleInteraction = async (req, res, interactionType) => {
     const columnName = interactionType === 'partage' ? 'partages' : 'likes';
     await connection.execute(`UPDATE promotions SET ${columnName} = ${columnName} + 1 WHERE id = ?`, [promotionId]);
 
-    // 5. Vérifier si VUE validée
-    const [interactions] = await connection.execute(
-      'SELECT COUNT(DISTINCT type_interaction) as count FROM interactions WHERE id_utilisateur = ? AND id_promotion = ? AND type_interaction IN (?, ?)',
-      [userId, promotionId, 'like', 'partage']
-    );
-
-    // Si le compte est à 2 (like + partage), on déclenche la logique de la "vue"
-    if (interactions.length > 0 && interactions[0].count === 2) {
-
-      const [existingView] = await connection.execute('SELECT id FROM interactions WHERE id_utilisateur = ? AND id_promotion = ? AND type_interaction = ?', [userId, promotionId, 'vue']);
-
-      if (existingView.length === 0) {
-        // --- MODIFICATION ICI : On récupère aussi le nom du pack (pk.nom_pack) ---
-        const [promoRows] = await connection.execute(
-          `SELECT p.id, p.budget_restant, p.vues, p.vues_potentielles, pk.remuneration, pk.nom_pack 
-             FROM promotions p 
-             JOIN packs pk ON p.id_pack = pk.id 
-             WHERE p.id = ? AND p.statut = 'en_cours' FOR UPDATE`,
-          [promotionId]
-        );
-
-        const promotion = promoRows[0];
-        if (promotion && Number(promotion.budget_restant) >= Number(promotion.remuneration)) {
-          const montant = Number(promotion.remuneration);
-
-          // Logique Vue Classique
-          await connection.execute('INSERT INTO interactions (id_utilisateur, id_promotion, type_interaction) VALUES (?, ?, ?)', [userId, promotionId, 'vue']);
-
-          // Mise à jour stats promo et argent user
-          await connection.execute('UPDATE promotions SET vues = vues + 1, budget_restant = budget_restant - ? WHERE id = ?', [montant, promotionId]);
-          await connection.execute('UPDATE utilisateurs SET remuneration_utilisateur = COALESCE(remuneration_utilisateur,0) + ? WHERE id = ?', [montant, userId]);
-          await connection.execute('INSERT INTO user_gains (id_utilisateur, id_promotion, montant, type_gain) VALUES (?, ?, ?, ?)', [userId, promotionId, montant, 'vue']);
-
-          // === LOGIQUE PARRAINAGE EXISTANTE (Gardée) ===
-          if (promotion.nom_pack === 'Diamant' || promotion.nom_pack === 'diamant') {
-            // ... ton code parrainage ...
-            const [userRows] = await connection.execute('SELECT parrain_id FROM utilisateurs WHERE id = ?', [userId]);
-            if (userRows.length > 0 && userRows[0].parrain_id) {
-              await connection.execute('UPDATE utilisateurs SET points = points + 5 WHERE id = ?', [userRows[0].parrain_id]);
-              await connection.execute('INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, ?, ?, NOW())', [userRows[0].parrain_id, 5, 'bonus_parrainage_diamant']);
-            }
-          }
-
-          // =========================================================================
-          // <<< AJOUT ICI : GESTION BONUS 10 VIDÉOS PAR JOUR >>>
-          // =========================================================================
-          const today = new Date().toISOString().split('T')[0];
-
-          // 1. On insère ou on incrémente le compteur journalier
-          await connection.execute(`
-            INSERT INTO daily_activity (user_id, date, videos_watched) 
-            VALUES (?, ?, 1)
-            ON DUPLICATE KEY UPDATE videos_watched = videos_watched + 1
-          `, [userId, today]);
-
-          // 2. On vérifie combien on en a regardé aujourd'hui
-          const [activityRows] = await connection.execute(
-            'SELECT videos_watched FROM daily_activity WHERE user_id = ? AND date = ?',
-            [userId, today]
-          );
-
-          if (activityRows.length > 0) {
-            const count = activityRows[0].videos_watched;
-
-            // Si on vient d'atteindre exactement la 10ème vidéo
-            if (count === 10) {
-              await connection.execute(
-                'UPDATE utilisateurs SET points = COALESCE(points, 0) + 5 WHERE id = ?',
-                [userId]
-              );
-              await connection.execute(
-                'INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, 5, ?, NOW())',
-                [userId, 'bonus_10_videos_jour']
-              );
-            }
-          }
-          // =========================================================================
-          // <<< FIN DE L'AJOUT >>>
-          // =========================================================================
-
-          // Vérification fin de promo
-          const newVues = promotion.vues + 1;
-          const newBudget = Number(promotion.budget_restant) - montant; // Note: budget_restant original
-          if (newVues >= promotion.vues_potentielles || newBudget < montant) {
-            await connection.execute('UPDATE promotions SET statut = ?, date_fin = NOW() WHERE id = ?', ['termine', promotionId]);
-            await notifyClientOfFinishedPromotion(promotionId, connection, req);
-          }
-
-        } else {
-          // Budget insuffisant
-          await connection.execute('UPDATE promotions SET statut = ?, date_fin = NOW() WHERE id = ?', ['termine', promotionId]);
-          await notifyClientOfFinishedPromotion(promotionId, connection, req);
-        }
-      }
-    }
+    // --- ICI : ON NE FAIT PLUS RIEN D'AUTRE ---
+    // On attend que le mobile appelle /view pour donner l'argent.
 
     await connection.commit();
     res.status(200).json({ message: `Interaction '${interactionType}' enregistrée !` });
@@ -288,7 +185,6 @@ const handleInteraction = async (req, res, interactionType) => {
     connection.release();
   }
 };
-
 exports.likePromotion = (req, res) => handleInteraction(req, res, 'like');
 exports.sharePromotion = (req, res) => handleInteraction(req, res, 'partage');
 
@@ -315,22 +211,34 @@ exports.addComment = async (req, res) => {
 exports.viewPromotion = async (req, res) => {
   const { promotionId } = req.params;
   const userId = req.user.id;
-  // 1. On récupère le device_id envoyé par Flutter
   const { device_id } = req.body; 
 
   const connection = await pool.getConnection();
 
-  console.log(`\n--- [DEBUG] Début viewPromotion pour User ${userId} / Promo ${promotionId} / Device ${device_id} ---`);
+  console.log(`\n--- [DEBUG] viewPromotion | User: ${userId} | Promo: ${promotionId} | Device: ${device_id} ---`);
 
   try {
     await connection.beginTransaction();
 
-    // =========================================================================
-    // <<< AJOUT SECURITE : VERIFICATION DU DEVICE ID >>>
-    // =========================================================================
+    // 1. VÉRIFICATION PRÉALABLE : L'utilisateur a-t-il Liké ET Partagé ?
+    const [conditions] = await connection.execute(
+        `SELECT COUNT(DISTINCT type_interaction) as count 
+         FROM interactions 
+         WHERE id_utilisateur = ? 
+         AND id_promotion = ? 
+         AND type_interaction IN ('like', 'partage')`,
+        [userId, promotionId]
+    );
+
+    // Si count < 2, ça veut dire qu'il manque soit le like, soit le partage
+    if (conditions[0].count < 2) {
+        await connection.rollback();
+        console.log(`[DEBUG] 🚫 Refusé : L'utilisateur n'a pas fini les étapes (Count: ${conditions[0].count})`);
+        return res.status(400).json({ message: "Vous devez Liker et Partager avant de valider la vue." });
+    }
+
+    // 2. SÉCURITÉ DEVICE ID
     if (device_id) {
-        // On vérifie si CET appareil a déjà validé UNE VUE pour CETTE promotion
-        // peu importe quel utilisateur était connecté.
         const [deviceCheck] = await connection.execute(
             `SELECT id FROM interactions 
              WHERE id_promotion = ? 
@@ -340,21 +248,18 @@ exports.viewPromotion = async (req, res) => {
         );
 
         if (deviceCheck.length > 0) {
-            console.log(`[DEBUG] 🚫 Fraude détectée : Cet appareil (${device_id}) a déjà vu cette pub.`);
+            console.log(`[DEBUG] 🚫 Fraude Device ID détectée.`);
             await connection.rollback();
             return res.status(403).json({ 
                 message: 'Cet appareil a déjà bénéficié de cette offre promotionnelle.' 
             });
         }
     } else {
-        console.log(`[DEBUG] ⚠️ Attention : Aucun device_id reçu !`);
-        // Optionnel : Tu peux refuser la vue si pas de device_id pour être strict
-        // return res.status(400).json({ message: "Identification de l'appareil impossible." });
+        // Optionnel : Tu peux bloquer si pas de device_id. Pour l'instant on log juste.
+        console.log(`[DEBUG] ⚠️ Aucun device_id reçu.`);
     }
-    // =========================================================================
 
-
-    // 2) Vérifier si l'utilisateur actuel a déjà vu (Doublon User)
+    // 3. Vérifier doublon Utilisateur (Au cas où il change de téléphone)
     const [existing] = await connection.execute(
       'SELECT id FROM interactions WHERE id_utilisateur = ? AND id_promotion = ? AND type_interaction = ?',
       [userId, promotionId, 'vue']
@@ -362,12 +267,12 @@ exports.viewPromotion = async (req, res) => {
 
     if (existing.length > 0) {
       await connection.rollback();
-      return res.status(200).json({ message: 'Vue déjà comptabilisée pour cet utilisateur.' });
+      return res.status(200).json({ message: 'Vue déjà comptabilisée.' });
     }
 
-    // 3) Récupérer les infos de la promotion
+    // 4. Récupérer Promo & Budget (Verrouillage FOR UPDATE)
     const [promoRows] = await connection.execute(
-      `SELECT p.id, p.budget_restant, p.vues, p.vues_potentielles, p.id_pack, pk.remuneration
+      `SELECT p.id, p.budget_restant, p.vues, p.vues_potentielles, p.id_pack, pk.remuneration, pk.nom_pack
          FROM promotions p
          JOIN packs pk ON p.id_pack = pk.id
          WHERE p.id = ? AND p.statut = 'en_cours' FOR UPDATE`,
@@ -377,12 +282,12 @@ exports.viewPromotion = async (req, res) => {
     const promotion = promoRows[0];
     if (!promotion) {
       await connection.rollback();
-      return res.status(404).json({ message: 'Promotion non trouvée ou terminée.' });
+      return res.status(404).json({ message: 'Promotion introuvable ou terminée.' });
     }
 
     const montant = Number(promotion.remuneration || 0);
 
-    // 4) Vérifier budget
+    // 5. Vérifier Budget
     if (promotion.budget_restant < montant) {
       await connection.execute(
         'UPDATE promotions SET statut = ?, date_fin = NOW() WHERE id = ?',
@@ -390,17 +295,17 @@ exports.viewPromotion = async (req, res) => {
       );
       await notifyClientOfFinishedPromotion(promotionId, connection, req);
       await connection.commit();
-      return res.status(400).json({ message: 'Budget de la promotion épuisé.' });
+      return res.status(400).json({ message: 'Budget épuisé.' });
     }
 
-    // 5) Enregistrer la vue AVEC LE DEVICE ID
-    console.log(`[DEBUG] ✅ Enregistrement interaction "vue" avec Device ID...`);
+    // 6. ENREGISTREMENT VUE (Avec Device ID !)
+    console.log(`[DEBUG] ✅ Validation Vue + Gain (${montant} FCFA)`);
     await connection.execute(
       'INSERT INTO interactions (id_utilisateur, id_promotion, type_interaction, device_id) VALUES (?, ?, ?, ?)',
-      [userId, promotionId, 'vue', device_id] // <-- On insère le device_id ici
+      [userId, promotionId, 'vue', device_id] 
     );
 
-    // 5) Update Promotion
+    // 7. Mise à jour Promotion
     const newVues = promotion.vues + 1;
     const newBudget = Number(promotion.budget_restant) - montant;
     await connection.execute(
@@ -408,8 +313,7 @@ exports.viewPromotion = async (req, res) => {
       [newVues, newBudget, promotionId]
     );
 
-    // 6) Créditer Cash Utilisateur
-    console.log(`[DEBUG] 💰 Crédit de ${montant} FCFA à l'utilisateur.`);
+    // 8. Créditer Utilisateur
     await connection.execute(
       'UPDATE utilisateurs SET remuneration_utilisateur = COALESCE(remuneration_utilisateur,0) + ? WHERE id = ?',
       [montant, userId]
@@ -418,64 +322,40 @@ exports.viewPromotion = async (req, res) => {
       'INSERT INTO user_gains (id_utilisateur, id_promotion, montant, type_gain) VALUES (?, ?, ?, ?)',
       [userId, promotionId, montant, 'vue']
     );
-// --- AJOUT NOTIFICATION : VIDÉO REGARDÉE ---
-    await notificationService.envoyerNotification(
-      userId,
-      'video_regardee',
-      'Vidéo visionnée !',
-      `Vous avez gagné ${montant} FCFA`,
-      { montant, promotion_id: promotionId }
-    ).catch(err => console.error('Erreur notification video_regardee:', err));
-    // ------------------------------------------
-    // =========================================================================
-    // --- GESTION BONUS 10 VIDÉOS PAR JOUR (AVEC LOGS) ---
-    // =========================================================================
 
+    // 9. Bonus Parrainage (Diamant)
+    if (promotion.nom_pack?.toLowerCase() === 'diamant') {
+        const [userRows] = await connection.execute('SELECT parrain_id FROM utilisateurs WHERE id = ?', [userId]);
+        if (userRows.length > 0 && userRows[0].parrain_id) {
+            await connection.execute('UPDATE utilisateurs SET points = points + 5 WHERE id = ?', [userRows[0].parrain_id]);
+            await connection.execute('INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, ?, ?, NOW())', [userRows[0].parrain_id, 5, 'bonus_parrainage_diamant']);
+        }
+    }
+
+    // 10. Bonus Quotidien (10 vidéos)
     const today = new Date().toISOString().split('T')[0];
-    console.log(`[DEBUG] 📅 Mise à jour daily_activity pour la date : ${today}`);
-
-    // A. Exécution de la requête d'incrémentation
-    // Note: Le résultat [result] contient affectedRows. 
-    // 1 = Insert, 2 = Update (C'est une spécificité MySQL avec ON DUPLICATE KEY)
-    const [resultUpdate] = await connection.execute(`
+    await connection.execute(`
         INSERT INTO daily_activity (user_id, date, videos_watched) 
         VALUES (?, ?, 1)
         ON DUPLICATE KEY UPDATE videos_watched = videos_watched + 1
     `, [userId, today]);
 
-    console.log(`[DEBUG] Résultat SQL daily_activity: affectedRows = ${resultUpdate.affectedRows}`);
-
-    // B. Lecture pour vérification
     const [activityRows] = await connection.execute(
       'SELECT videos_watched FROM daily_activity WHERE user_id = ? AND date = ?',
       [userId, today]
     );
-
-    if (activityRows.length > 0) {
-      const count = activityRows[0].videos_watched;
-      console.log(`[DEBUG] 📊 Nouveau total videos_watched : ${count}`);
-
-      if (count === 10) {
-        console.log(`[DEBUG] 🎉 BONUS 10 VIDÉOS ATTEINT ! Attribution des 5 points.`);
-
-        await connection.execute(
-          'UPDATE utilisateurs SET points = COALESCE(points, 0) + 5 WHERE id = ?',
-          [userId]
-        );
-
-        await connection.execute(
-          'INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, 5, ?, NOW())',
-          [userId, 'bonus_10_videos_jour']
-        );
-      } else {
-        console.log(`[DEBUG] Pas encore de bonus (Objectif: 10, Actuel: ${count})`);
-      }
-    } else {
-      console.log(`[DEBUG] ⚠️ ERREUR CRITIQUE: Impossible de relire la ligne daily_activity juste après insertion.`);
+    if (activityRows.length > 0 && activityRows[0].videos_watched === 10) {
+        await connection.execute('UPDATE utilisateurs SET points = COALESCE(points, 0) + 5 WHERE id = ?', [userId]);
+        await connection.execute('INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, 5, ?, NOW())', [userId, 'bonus_10_videos_jour']);
     }
-    // =========================================================================
 
-    // 7) Fin de promo ?
+    // 11. Notification
+    await notificationService.envoyerNotification(
+      userId, 'video_regardee', 'Félicitations !', 
+      `Vous avez gagné ${montant} FCFA`, { montant, promotion_id: promotionId }
+    ).catch(e => console.error("Err Notif:", e));
+
+    // 12. Fin de promo ?
     if (newVues >= promotion.vues_potentielles || newBudget < montant) {
       await connection.execute(
         'UPDATE promotions SET statut = ?, date_fin = NOW() WHERE id = ?',
@@ -485,12 +365,11 @@ exports.viewPromotion = async (req, res) => {
     }
 
     await connection.commit();
-    console.log(`[DEBUG] ✅ Transaction validée avec succès.\n`);
-    res.status(200).json({ message: 'Vue comptabilisée et budget déduit.' });
+    res.status(200).json({ message: 'Vue validée avec succès.' });
 
   } catch (error) {
     await connection.rollback();
-    console.error("\n[DEBUG] ❌ ERREUR CRITIQUE dans viewPromotion:", error);
+    console.error("\n[DEBUG] ❌ Erreur viewPromotion:", error);
     res.status(500).json({ message: 'Erreur serveur' });
   } finally {
     connection.release();
