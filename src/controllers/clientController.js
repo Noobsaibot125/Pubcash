@@ -217,7 +217,52 @@ exports.createPromotion = async (req, res) => {
         notificationService.notifierNouvellePromotion(
             insertedPromotionId, titre, finalCiblageCommune, tranche_age
         ).catch(err => console.error("Erreur background notification:", err));
-
+// ========================================================
+// SOCKET.IO : Émettre l'événement de nouvelle vidéo en temps réel
+// ==================================================================
+try {
+    const io = req.app.get('io');
+    if (io) {
+        const baseUrl = `${req.protocol}://${req.get('host')}`;
+        const videoUrl = url_video && !url_video.startsWith('http')
+            ? `${baseUrl}/uploads/videos/${encodeURIComponent(url_video)}`
+            : url_video;
+        const thumbUrl = thumbnail_url && !thumbnail_url.startsWith('http')
+            ? `${baseUrl}/uploads/thumbnails/${encodeURIComponent(thumbnail_url)}`
+            : thumbnail_url;
+        const [clientInfo] = await connection.execute(
+            'SELECT nom, prenom, nom_utilisateur FROM clients WHERE id = ?',
+            [clientId]
+        );
+        const promotionData = {
+            id: insertedPromotionId,
+            titre: titre,
+            description: description,
+            url_video: videoUrl,
+            thumbnail_url: thumbUrl,
+            duree_secondes: duree_secondes,
+            type_pack: packId,
+            ciblage_commune: finalCiblageCommune,
+            tranche_age: tranche_age,
+            vues: 0,
+            likes: 0,
+            partages: 0,
+            statut: 'en_cours',
+            promoteur: clientInfo[0] ? {
+                nom: clientInfo[0].nom,
+                prenom: clientInfo[0].prenom,
+                nom_utilisateur: clientInfo[0].nom_utilisateur
+            } : null,
+            date_creation: new Date().toISOString()
+        };
+        io.emit('new-video', promotionData);
+        console.log(`✅ Socket.IO: Événement 'new-video' émis pour la promotion ${insertedPromotionId}`);
+    } else {
+        console.warn('⚠️ Socket.IO non disponible (io est null)');
+    }
+} catch (socketError) {
+    console.error('❌ Erreur lors de l\'émission Socket.IO:', socketError);
+}
         res.status(201).json({ 
             message: 'Promotion créée avec succès !', 
             promotionId: insertedPromotionId,
