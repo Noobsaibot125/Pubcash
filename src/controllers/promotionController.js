@@ -737,30 +737,35 @@ exports.withdrawEarnings = async (req, res) => {
       let professionalMessage = 'Erreur inattendue. Veuillez contacter l\'administrateur.';
 
       switch (errorCode) {
+        // Erreur de fonds CinetPay insuffisants (Code 602 est un code CinetPay générique)
+        case 602: // INSUFFICIENT_BALANCE
         case 722: 
         case 'ERROR_PM_AMOUNT': 
-          professionalMessage = 'Erreur inattendue: Le service de retrait est momentanément indisponible. Veuillez contacter l\'administrateur.';
+          professionalMessage = 'Transaction non disponible : Le service de retrait est momentanément indisponible.';
           break;
+        
         case 725: 
         case 726: 
-          professionalMessage = `Le numéro de téléphone ${cleanPhone} est soit incorrect, soit inactif chez l'opérateur. Veuillez vérifier votre numéro.`;
+          professionalMessage = `Le numéro de téléphone ${cleanPhone} est incorrect ou inactif. Veuillez vérifier votre numéro.`;
           break;
+
+        // Cas 5 : Opérateur indisponible
         case 727: 
         case 728: 
-          professionalMessage = `L'opérateur ${operator.toUpperCase()} rencontre un problème technique. Veuillez réessayer plus tard ou choisir un autre opérateur.`;
+          professionalMessage = `L'opérateur ${operator.toUpperCase()} est indisponible. Veuillez réessayer plus tard.`;
           break;
+        
         default:
-          professionalMessage = 'Erreur inattendue. Le transfert a échoué. Veuillez contacter l\'administrateur.';
+          // Toutes les autres erreurs inconnues (garder un message de type 500)
+          professionalMessage = 'Erreur serveur inattendue. Veuillez contacter le support.';
           break;
       }
 
       // REMBOURSEMENT UTILISATEUR
-      // On utilise pool.execute car la connexion locale a été relâchée plus haut.
       await pool.execute(
         'UPDATE utilisateurs SET remuneration_utilisateur = remuneration_utilisateur + ? WHERE id = ?',
         [withdrawalAmount, userId]
       );
-
       // Mise à jour statut REJETE
       await pool.execute(
           'UPDATE demandes_retrait SET statut = ?, date_traitement = NOW() WHERE transaction_id = ?',
@@ -769,16 +774,14 @@ exports.withdrawEarnings = async (req, res) => {
       
       // Envoi de la notification de rejet
       await notificationService.envoyerNotification(
-        userId,
-        'retrait_echec',
-        'Échec du retrait',
-        `Le transfert a échoué. ${withdrawalAmount} Fcfa remboursés.`,
+        userId, 'retrait_echec', 'Échec du retrait', `Le transfert a échoué. ${withdrawalAmount} Fcfa remboursés.`, 
         { montant: withdrawalAmount, transaction_id: transactionId, statut: 'echec',operator: operator,numero_telephone: cleanPhone }
       ).catch(err => console.error('Erreur notification retrait_echec:', err));
 
-      return res.status(500).json({ 
-        message: professionalMessage,
-        details: `CinetPay Code: ${errorCode}` 
+      // 🛑 RENVOI UN STATUT 400 POUR LES ERREURS DE VALIDATION
+      return res.status(400).json({ 
+        message: professionalMessage, // <--- Le message clair
+        details: `CinetPay Code: ${errorCode}` // <--- Le détail technique pour le débug
       });
     }
 
