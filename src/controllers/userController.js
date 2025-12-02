@@ -27,30 +27,50 @@ exports.getProfileForUser = async (req, res) => {
 
     let user = rows[0];
 
-    // --- AUTO-GENERATION DU CODE PARRAINAGE SI ABSENT ---
-    if (!user.code_parrainage) {
-        // Générer un code court (ex: PRENOM + 4 chiffres aléatoires ou UUID partiel)
-        // Ici on prend les 8 premiers caractères d'un UUID en majuscule
-        const newCode = uuidv4().substring(0, 8).toUpperCase();
+    // --- CORRECTION IMAGE : GESTION DU FORMAT HEXADÉCIMAL ---
+    const processImage = (rawData, folder) => {
+        if (!rawData) return null;
         
-        await pool.execute('UPDATE utilisateurs SET code_parrainage = ? WHERE id = ?', [newCode, userId]);
-        user.code_parrainage = newCode; // On met à jour l'objet pour l'envoi
-    }
-    // ----------------------------------------------------
+        // 1. Convertir si c'est un Buffer ou une string Hex (0x...)
+        let imageStr = rawData.toString();
+        if (imageStr.startsWith('0x')) {
+            // Décodage Hex vers String lisible
+            imageStr = Buffer.from(imageStr.slice(2), 'hex').toString('utf8');
+        }
 
-    // Récupérer les filleuls
-  const [referrals] = await pool.execute(
+        // 2. Vérifier si c'est une URL complète (Google/Facebook)
+        if (imageStr.startsWith('http')) {
+            return imageStr;
+        }
+
+        // 3. Sinon, c'est un fichier local -> On ajoute le domaine
+        return `${req.protocol}://${req.get('host')}/uploads/${folder}/${imageStr}`;
+    };
+
+    // On écrase les valeurs brutes par les URL traitées pour faciliter la vie au Frontend
+    const profile_image_url = processImage(user.photo_profil, 'profile');
+    const background_image_url = processImage(user.image_background, 'background');
+    
+    // On met à jour l'objet user pour que le champ 'photo_profil' contienne le nom propre décodé (utile pour l'édition)
+    // Optionnel : tu peux garder l'original si tu veux, mais le frontend a besoin de profile_image_url
+    // ---------------------------------------------------------
+
+    // --- Code parrainage (inchangé) ---
+    if (!user.code_parrainage) {
+        const newCode = uuidv4().substring(0, 8).toUpperCase();
+        await pool.execute('UPDATE utilisateurs SET code_parrainage = ? WHERE id = ?', [newCode, userId]);
+        user.code_parrainage = newCode;
+    }
+
+    const [referrals] = await pool.execute(
       `SELECT nom_utilisateur, date_inscription FROM utilisateurs WHERE parrain_id = ? ORDER BY date_inscription DESC`,
       [userId]
     );
 
-    const profile_image_url = user.photo_profil ? `${req.protocol}://${req.get('host')}/uploads/profile/${user.photo_profil}` : null;
-    const background_image_url = user.image_background ? `${req.protocol}://${req.get('host')}/uploads/background/${user.image_background}` : null;
-
     res.status(200).json({
       ...user,
-      profile_image_url,
-      background_image_url,
+      photo_profil: profile_image_url, // On envoie directement l'URL finale utilisable
+      image_background: background_image_url, // Idem
       referrals
     });
 
@@ -59,7 +79,6 @@ exports.getProfileForUser = async (req, res) => {
     res.status(500).json({ message: 'Erreur serveur lors de la récupération du profil.' });
   }
 };
-
 
 /**
  * @desc    Met à jour le profil de l'utilisateur connecté
