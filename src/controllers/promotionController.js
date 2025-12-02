@@ -755,7 +755,7 @@ exports.withdrawEarnings = async (req, res) => {
         'retrait_echec',
         'Échec du retrait',
         `Le transfert a échoué. ${withdrawalAmount} Fcfa remboursés.`,
-        { montant: withdrawalAmount, transaction_id: transactionId, statut: 'echec',operator: operator }
+        { montant: withdrawalAmount, transaction_id: transactionId, statut: 'echec',operator: operator,numero_telephone: cleanPhone }
       ).catch(err => console.error('Erreur notification retrait_echec:', err));
 
       return res.status(500).json({ 
