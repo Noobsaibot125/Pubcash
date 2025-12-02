@@ -230,14 +230,13 @@ exports.viewPromotion = async (req, res) => {
         [userId, promotionId]
     );
 
-    // Si count < 2, ça veut dire qu'il manque soit le like, soit le partage
     if (conditions[0].count < 2) {
         await connection.rollback();
-        console.log(`[DEBUG] 🚫 Refusé : L'utilisateur n'a pas fini les étapes (Count: ${conditions[0].count})`);
+        console.log(`[DEBUG] 🚫 Refusé : L'utilisateur n'a pas fini les étapes.`);
         return res.status(400).json({ message: "Vous devez Liker et Partager avant de valider la vue." });
     }
 
-    // 2. SÉCURITÉ DEVICE ID
+    // 2. SÉCURITÉ DEVICE ID & NETTOYAGE FRAUDE
     if (device_id) {
         const [deviceCheck] = await connection.execute(
             `SELECT id FROM interactions 
@@ -249,14 +248,37 @@ exports.viewPromotion = async (req, res) => {
 
         if (deviceCheck.length > 0) {
             console.log(`[DEBUG] 🚫 Fraude Device ID détectée.`);
-            await connection.rollback();
+
+            // --- DEBUT DU NETTOYAGE ---
+            // On considère que s'il fraude, ses likes et partages ne valent rien.
+            
+            // A. On décrémente les compteurs de la promotion (pour que le promoteur ait les vrais chiffres)
+            // On utilise GREATEST(x-1, 0) pour ne jamais descendre en dessous de 0
+            await connection.execute(
+                `UPDATE promotions 
+                 SET likes = GREATEST(likes - 1, 0), 
+                     partages = GREATEST(partages - 1, 0) 
+                 WHERE id = ?`,
+                [promotionId]
+            );
+
+            // B. On supprime ses interactions 'like' et 'partage' de la table interactions
+            await connection.execute(
+                `DELETE FROM interactions 
+                 WHERE id_utilisateur = ? 
+                 AND id_promotion = ? 
+                 AND type_interaction IN ('like', 'partage')`,
+                [userId, promotionId]
+            );
+            
+            // C. On COMMIT (Sauvegarde) ce nettoyage avant de rejeter
+            await connection.commit();
+            // --- FIN DU NETTOYAGE ---
+
             return res.status(403).json({ 
                 message: 'Cet appareil a déjà bénéficié de cette offre promotionnelle.' 
             });
         }
-    } else {
-        // Optionnel : Tu peux bloquer si pas de device_id. Pour l'instant on log juste.
-        console.log(`[DEBUG] ⚠️ Aucun device_id reçu.`);
     }
 
     // 3. Vérifier doublon Utilisateur (Au cas où il change de téléphone)
@@ -270,14 +292,14 @@ exports.viewPromotion = async (req, res) => {
       return res.status(200).json({ message: 'Vue déjà comptabilisée.' });
     }
 
-    // 4. Récupérer Promo & Budget (Verrouillage FOR UPDATE)
-   const [promoRows] = await connection.execute(
+    // 4. Récupérer Promo & Budget
+    const [promoRows] = await connection.execute(
       `SELECT p.id, p.budget_restant, p.vues, p.vues_potentielles, p.id_pack, 
-              p.url_video, p.thumbnail_url, p.titre, -- <--- AJOUTÉ
+              p.url_video, p.thumbnail_url, p.titre,
               pk.remuneration, pk.nom_pack
-         FROM promotions p
-         JOIN packs pk ON p.id_pack = pk.id
-         WHERE p.id = ? AND p.statut = 'en_cours' FOR UPDATE`,
+          FROM promotions p
+          JOIN packs pk ON p.id_pack = pk.id
+          WHERE p.id = ? AND p.statut = 'en_cours' FOR UPDATE`,
       [promotionId]
     );
 
@@ -300,7 +322,7 @@ exports.viewPromotion = async (req, res) => {
       return res.status(400).json({ message: 'Budget épuisé.' });
     }
 
-    // 6. ENREGISTREMENT VUE (Avec Device ID !)
+    // 6. ENREGISTREMENT VUE
     console.log(`[DEBUG] ✅ Validation Vue + Gain (${montant} FCFA)`);
     await connection.execute(
       'INSERT INTO interactions (id_utilisateur, id_promotion, type_interaction, device_id) VALUES (?, ?, ?, ?)',
@@ -325,7 +347,7 @@ exports.viewPromotion = async (req, res) => {
       [userId, promotionId, montant, 'vue']
     );
 
-    // 9. Bonus Parrainage (Diamant)
+    // 9. Bonus Parrainage
     if (promotion.nom_pack?.toLowerCase() === 'diamant') {
         const [userRows] = await connection.execute('SELECT parrain_id FROM utilisateurs WHERE id = ?', [userId]);
         if (userRows.length > 0 && userRows[0].parrain_id) {
@@ -334,7 +356,7 @@ exports.viewPromotion = async (req, res) => {
         }
     }
 
-    // 10. Bonus Quotidien (10 vidéos)
+    // 10. Bonus Quotidien
     const today = new Date().toISOString().split('T')[0];
     await connection.execute(`
         INSERT INTO daily_activity (user_id, date, videos_watched) 
@@ -351,14 +373,11 @@ exports.viewPromotion = async (req, res) => {
         await connection.execute('INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, 5, ?, NOW())', [userId, 'bonus_10_videos_jour']);
     }
 
-   // 11. Notification
-    // 👇 MODIFICATION ICI : On construit l'URL complète
+    // 11. Notification
     const baseUrl = `${req.protocol}://${req.get('host')}`;
-    
     const fullVideoUrl = promotion.url_video && !promotion.url_video.startsWith('http')
         ? `${baseUrl}/uploads/videos/${promotion.url_video}`
         : promotion.url_video;
-
     const fullThumbnailUrl = promotion.thumbnail_url && !promotion.thumbnail_url.startsWith('http')
         ? `${baseUrl}/uploads/thumbnails/${promotion.thumbnail_url}`
         : promotion.thumbnail_url;
@@ -371,7 +390,6 @@ exports.viewPromotion = async (req, res) => {
       { 
         montant, 
         promotion_id: promotionId,
-        // 👇 On envoie les URLs complètes maintenant !
         url_video: fullVideoUrl,
         thumbnail_url: fullThumbnailUrl,
         titre: promotion.titre

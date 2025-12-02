@@ -220,7 +220,10 @@ const generateAndStoreTokens = async (res, user, userTable, role) => {
             email: user.email,
             nom_utilisateur: user.nom_utilisateur, // Ajout utile
             photo_profil: user.photo_profil,       // Ajout utile
-            code_parrainage: finalCodeParrainage   // <--- C'EST CA QUI MANQUAIT !
+            code_parrainage: finalCodeParrainage,
+            id_google: user.id_google,
+            id_facebook: user.id_facebook,
+            commune: user.commune_choisie || user.commune   // <--- C'EST CA QUI MANQUAIT !
         }
     });
 };
@@ -649,7 +652,9 @@ exports.facebookAuth = async (req, res) => {
                 email: user.email,
                 photo_profil: user.photo_profil,
                 role: 'utilisateur',
-                push_notification: user.push_notification
+                push_notification: user.push_notification,
+                id_facebook: user.id_facebook, 
+                commune: user.commune_choisie
             },
             profileCompleted: Boolean(user.commune_choisie && user.date_naissance)
         });
@@ -824,7 +829,9 @@ exports.googleAuth = async (req, res) => {
                 email: user.email,
                 photo_profil: user.photo_profil,
                 role: 'utilisateur',
-                push_notification: user.push_notification
+                push_notification: user.push_notification,
+                id_google: user.id_google,
+                commune: user.commune_choisie
             },
             profileCompleted: Boolean(user.commune_choisie && user.date_naissance && user.contact)
         });
