@@ -786,7 +786,8 @@ exports.getWithdrawalHistoryForUser = async (req, res) => {
           montant, 
           statut, 
           date_demande as date,
-          operateur_mobile as operator
+          operateur_mobile as operator,
+          transaction_id -- 👈 AJOUT IMPORTANT ICI
        FROM demandes_retrait 
        WHERE id_utilisateur = ? 
        ORDER BY date_demande DESC`,
