@@ -271,8 +271,10 @@ exports.viewPromotion = async (req, res) => {
     }
 
     // 4. Récupérer Promo & Budget (Verrouillage FOR UPDATE)
-    const [promoRows] = await connection.execute(
-      `SELECT p.id, p.budget_restant, p.vues, p.vues_potentielles, p.id_pack, pk.remuneration, pk.nom_pack
+   const [promoRows] = await connection.execute(
+      `SELECT p.id, p.budget_restant, p.vues, p.vues_potentielles, p.id_pack, 
+              p.url_video, p.thumbnail_url, p.titre, -- <--- AJOUTÉ
+              pk.remuneration, pk.nom_pack
          FROM promotions p
          JOIN packs pk ON p.id_pack = pk.id
          WHERE p.id = ? AND p.statut = 'en_cours' FOR UPDATE`,
@@ -350,9 +352,19 @@ exports.viewPromotion = async (req, res) => {
     }
 
     // 11. Notification
-    await notificationService.envoyerNotification(
-      userId, 'video_regardee', 'Félicitations !', 
-      `Vous avez gagné ${montant} FCFA`, { montant, promotion_id: promotionId }
+   await notificationService.envoyerNotification(
+      userId, 
+      'video_regardee', // Type
+      'Félicitations !', // Titre
+      `Vous avez gagné ${montant} FCFA`, // Message
+      { 
+        montant, 
+        promotion_id: promotionId,
+        // 👇 AJOUT DES INFOS POUR LE FRONTEND
+        url_video: promotion.url_video,
+        thumbnail_url: promotion.thumbnail_url,
+        titre: promotion.titre
+      }
     ).catch(e => console.error("Err Notif:", e));
 
     // 12. Fin de promo ?
