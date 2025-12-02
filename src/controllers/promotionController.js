@@ -675,7 +675,7 @@ exports.withdrawEarnings = async (req, res) => {
           'retrait_complete',
           'Retrait réussi',
           `Validé ✓ ${withdrawalAmount} Fcfa`,
-          { montant: withdrawalAmount, transaction_id: transactionId, statut: 'succes' }
+          { montant: withdrawalAmount, transaction_id: transactionId, statut: 'succes', operator: operator }
         ).catch(err => console.error('Erreur notification retrait_complete:', err));
 
         return res.status(200).json({ message: 'Retrait effectué avec succès !' });
@@ -730,7 +730,7 @@ exports.withdrawEarnings = async (req, res) => {
         'retrait_echec',
         'Échec du retrait',
         `Le transfert a échoué. ${withdrawalAmount} Fcfa remboursés.`,
-        { montant: withdrawalAmount, transaction_id: transactionId, statut: 'echec' }
+        { montant: withdrawalAmount, transaction_id: transactionId, statut: 'echec',operator: operator }
       ).catch(err => console.error('Erreur notification retrait_echec:', err));
 
       return res.status(500).json({ 
