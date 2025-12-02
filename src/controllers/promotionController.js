@@ -351,18 +351,29 @@ exports.viewPromotion = async (req, res) => {
         await connection.execute('INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, 5, ?, NOW())', [userId, 'bonus_10_videos_jour']);
     }
 
-    // 11. Notification
-   await notificationService.envoyerNotification(
+   // 11. Notification
+    // 👇 MODIFICATION ICI : On construit l'URL complète
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    
+    const fullVideoUrl = promotion.url_video && !promotion.url_video.startsWith('http')
+        ? `${baseUrl}/uploads/videos/${promotion.url_video}`
+        : promotion.url_video;
+
+    const fullThumbnailUrl = promotion.thumbnail_url && !promotion.thumbnail_url.startsWith('http')
+        ? `${baseUrl}/uploads/thumbnails/${promotion.thumbnail_url}`
+        : promotion.thumbnail_url;
+
+    await notificationService.envoyerNotification(
       userId, 
-      'video_regardee', // Type
-      'Félicitations !', // Titre
-      `Vous avez gagné ${montant} FCFA`, // Message
+      'video_regardee', 
+      'Félicitations !', 
+      `Vous avez gagné ${montant} FCFA`, 
       { 
         montant, 
         promotion_id: promotionId,
-        // 👇 AJOUT DES INFOS POUR LE FRONTEND
-        url_video: promotion.url_video,
-        thumbnail_url: promotion.thumbnail_url,
+        // 👇 On envoie les URLs complètes maintenant !
+        url_video: fullVideoUrl,
+        thumbnail_url: fullThumbnailUrl,
         titre: promotion.titre
       }
     ).catch(e => console.error("Err Notif:", e));
