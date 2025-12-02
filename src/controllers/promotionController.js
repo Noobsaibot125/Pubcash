@@ -617,14 +617,16 @@ exports.withdrawEarnings = async (req, res) => {
     );
 
     // Création de l'historique (Statut initial: EN_COURS)
-    await connection.execute(
-      'INSERT INTO demandes_retrait (id_utilisateur, montant, operateur_mobile, statut, date_demande, transaction_id) VALUES (?, ?, ?, ?, NOW(), ?)',
-      [userId, withdrawalAmount, operator, 'en_cours', transactionId]
+   await connection.execute(
+      `INSERT INTO demandes_retrait 
+       (id_utilisateur, montant, operateur_mobile, statut, date_demande, transaction_id, numero_telephone) 
+       VALUES (?, ?, ?, ?, NOW(), ?, ?)`,
+      [userId, withdrawalAmount, operator, 'en_cours', transactionId, cleanPhone]
     );
 
-    await connection.commit(); // <-- Libération du verrou BDD
+    await connection.commit();
     isCommitted = true;
-    connection.release(); // Libération de la connexion locale
+    connection.release();
 
     // 4. APPEL CINETPAY
     try {
@@ -698,7 +700,7 @@ exports.withdrawEarnings = async (req, res) => {
           'retrait_complete',
           'Retrait réussi',
           `Validé ✓ ${withdrawalAmount} Fcfa`,
-          { montant: withdrawalAmount, transaction_id: transactionId, statut: 'succes', operator: operator }
+          { montant: withdrawalAmount, transaction_id: transactionId, statut: 'succes', operator: operator,numero_telephone: cleanPhone }
         ).catch(err => console.error('Erreur notification retrait_complete:', err));
 
         return res.status(200).json({ message: 'Retrait effectué avec succès !' });
@@ -787,7 +789,8 @@ exports.getWithdrawalHistoryForUser = async (req, res) => {
           statut, 
           date_demande as date,
           operateur_mobile as operator,
-          transaction_id -- 👈 AJOUT IMPORTANT ICI
+          transaction_id,    -- 👈 Pour corriger le N/A
+          numero_telephone   -- 👈 Pour afficher le destinataire
        FROM demandes_retrait 
        WHERE id_utilisateur = ? 
        ORDER BY date_demande DESC`,
