@@ -1,4 +1,4 @@
-﻿// src/controllers/authController.js
+// src/controllers/authController.js
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
@@ -17,7 +17,7 @@ exports.registerAdmin = async (req, res) => {
 
     // ├ëtape 1 : V├⌐rifier le code secret d'invitation
     if (invitationCode !== process.env.ADMIN_INVITATION_CODE) {
-        return res.status(403).json({ message: 'Code d\'invitation incorrect.' });
+        return res.status(403).json({ message: 'Code d'invitation incorrect.' });
     }
 
     // ├ëtape 2 : Valider les autres champs
@@ -94,12 +94,12 @@ exports.registerClient = async (req, res) => {
     if (isEntreprise) {
         // Si c'est une entreprise, on exige le nom de l'entreprise et le RCCM
         if (!nom_entreprise || !rccm) {
-            return res.status(400).json({ message: 'Le nom de l\'entreprise et le RCCM sont requis.' });
+            return res.status(400).json({ message: 'Le nom de l'entreprise et le RCCM sont requis.' });
         }
     } else {
         // Si c'est un particulier, on exige nom, prénom et pseudo
         if (!nom || !prenom || !nom_utilisateur) {
-            return res.status(400).json({ message: 'Nom, prénom et nom d\'utilisateur sont requis.' });
+            return res.status(400).json({ message: 'Nom, prénom et nom d'utilisateur sont requis.' });
         }
     }
 
@@ -164,14 +164,14 @@ exports.registerClient = async (req, res) => {
         console.error("❌ Erreur registerClient:", error);
 
         if (error.code === 'ER_DUP_ENTRY') {
-            return res.status(409).json({ message: 'Cet email, téléphone ou nom d\'utilisateur est déjà utilisé.' });
+            return res.status(409).json({ message: 'Cet email, téléphone ou nom d'utilisateur est déjà utilisé.' });
         }
         // Gestion de l'erreur si vous avez oublié de mettre à jour la BDD
         if (error.code === 'ER_BAD_FIELD_ERROR') {
             return res.status(500).json({ message: 'Erreur technique : Colonnes manquantes dans la base de données (type_compte, nom_entreprise, etc.)' });
         }
 
-        res.status(500).json({ message: 'Erreur serveur lors de l\'inscription.' });
+        res.status(500).json({ message: 'Erreur serveur lors de l'inscription.' });
     }
 };
 // --- NOUVELLE FONCTION UTILITAIRE POUR G├ëN├ëRER LES TOKENS ---
@@ -197,8 +197,8 @@ const generateAndStoreTokens = async (res, user, userTable, role) => {
 
     const payload = { id: user.id, email: user.email, role: userRole };
 
-    const accessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRATION || '90d' });
-    const refreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.REFRESH_TOKEN_EXPIRATION || '365d' });
+    const accessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRATION || '15m' });
+    const refreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.REFRESH_TOKEN_EXPIRATION || '7d' });
 
     // Stocker le refresh token
     await pool.execute(`UPDATE ${userTable} SET refresh_token = ? WHERE id = ?`, [refreshToken, user.id]);
@@ -290,7 +290,7 @@ exports.loginClient = async (req, res) => {
 
         // V├⌐rification cruciale pour les clients
         if (!user.est_verifie) {
-            return res.status(403).json({ message: 'Votre compte n\'est pas v├⌐rifi├⌐.' });
+            return res.status(403).json({ message: 'Votre compte n'est pas v├⌐rifi├⌐.' });
         }
 
         const isMatch = await bcrypt.compare(password, user.mot_de_passe);
@@ -321,7 +321,7 @@ const handleDailyLogin = async (userId) => {
             'SELECT id FROM daily_activity WHERE user_id = ? AND date = ?',
             [userId, today]
         );
-
+        
         if (todayActivity.length > 0) {
             await connection.rollback();
             return; // Déjà traité pour aujourd'hui
@@ -466,7 +466,7 @@ exports.registerUtilisateur = async (req, res) => {
         if (existingUsers.length > 0) {
             await connection.rollback();
             // Message d'erreur mis à jour pour informer l'utilisateur
-            return res.status(409).json({ message: 'Email, nom d\'utilisateur ou numéro de téléphone déjà utilisé.' });
+            return res.status(409).json({ message: 'Email, nom d'utilisateur ou numéro de téléphone déjà utilisé.' });
         }
 
         // 2. LOGIQUE DE PARRAINAGE
@@ -866,11 +866,19 @@ exports.refreshToken = async (req, res) => {
             return res.status(403).json({ message: 'Refresh Token invalide ou r├⌐voqu├⌐.' });
         }
 
-        // 3. G├⌐n├⌐rer un nouvel accessToken
+        // 3. Générer un nouvel accessToken ET un nouveau refreshToken (Rotation)
         const payload = { id: decoded.id, email: decoded.email, role: decoded.role };
-        const newAccessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRATION || '90d' });
+        const newAccessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRATION || '15m' });
+        const newRefreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.REFRESH_TOKEN_EXPIRATION || '7d' });
 
-        res.json({ accessToken: newAccessToken });
+        // 4. Mettre à jour le refresh token en base de données
+        await pool.execute(`UPDATE ${userTable} SET refresh_token = ? WHERE id = ?`, [newRefreshToken, decoded.id]);
+
+        // 5. Renvoyer les deux tokens
+        res.json({ 
+            accessToken: newAccessToken,
+            refreshToken: newRefreshToken 
+        });
 
     } catch (error) {
         // Si le token est expir├⌐ ou invalide, on renvoie une erreur 403
