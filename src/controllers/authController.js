@@ -15,9 +15,9 @@ const generateReferralCode = (nom) => {
 exports.registerAdmin = async (req, res) => {
     const { nom_utilisateur, email, mot_de_passe, invitationCode } = req.body;
 
-    // ├ëtape 1 : V├⌐rifier le code secret d'invitation
+    // ├ëtape 1 : V├⌐rifier le code secret d\'invitation
     if (invitationCode !== process.env.ADMIN_INVITATION_CODE) {
-        return res.status(403).json({ message: 'Code d'invitation incorrect.' });
+        return res.status(403).json({ message: 'Code d\'invitation incorrect.' });
     }
 
     // ├ëtape 2 : Valider les autres champs
@@ -77,7 +77,7 @@ const checkEmailExists = async (email) => {
 exports.registerClient = async (req, res) => {
     console.log("📥 Données reçues:", req.body); // Pour voir ce que React envoie
 
-    // 1. On récupère TOUS les champs, y compris les nouveaux pour l'entreprise
+    // 1. On récupère TOUS les champs, y compris les nouveaux pour l\'entreprise
     const {
         nom, prenom, nom_utilisateur, email, mot_de_passe,
         telephone, commune, genre, type_compte, nom_entreprise, rccm
@@ -92,14 +92,14 @@ exports.registerClient = async (req, res) => {
     const isEntreprise = type_compte === 'entreprise';
 
     if (isEntreprise) {
-        // Si c'est une entreprise, on exige le nom de l'entreprise et le RCCM
+        // Si c\'est une entreprise, on exige le nom de l\'entreprise et le RCCM
         if (!nom_entreprise || !rccm) {
-            return res.status(400).json({ message: 'Le nom de l'entreprise et le RCCM sont requis.' });
+            return res.status(400).json({ message: 'Le nom de l\'entreprise et le RCCM sont requis.' });
         }
     } else {
-        // Si c'est un particulier, on exige nom, prénom et pseudo
+        // Si c\'est un particulier, on exige nom, prénom et pseudo
         if (!nom || !prenom || !nom_utilisateur) {
-            return res.status(400).json({ message: 'Nom, prénom et nom d'utilisateur sont requis.' });
+            return res.status(400).json({ message: 'Nom, prénom et nom d\'utilisateur sont requis.' });
         }
     }
 
@@ -119,7 +119,7 @@ exports.registerClient = async (req, res) => {
         const finalNom = isEntreprise ? null : nom;
         const finalPrenom = isEntreprise ? null : prenom;
 
-        // Astuce : On utilise le nom de l'entreprise comme pseudo interne si c'est une entreprise (pour éviter les doublons vides)
+        // Astuce : On utilise le nom de l\'entreprise comme pseudo interne si c\'est une entreprise (pour éviter les doublons vides)
         const finalNomUtilisateur = isEntreprise ? nom_entreprise.replace(/\s+/g, '_').toLowerCase() : nom_utilisateur;
 
         const finalNomEntreprise = isEntreprise ? nom_entreprise : null;
@@ -164,14 +164,14 @@ exports.registerClient = async (req, res) => {
         console.error("❌ Erreur registerClient:", error);
 
         if (error.code === 'ER_DUP_ENTRY') {
-            return res.status(409).json({ message: 'Cet email, téléphone ou nom d'utilisateur est déjà utilisé.' });
+            return res.status(409).json({ message: 'Cet email, téléphone ou nom d\'utilisateur est déjà utilisé.' });
         }
         // Gestion de l'erreur si vous avez oublié de mettre à jour la BDD
         if (error.code === 'ER_BAD_FIELD_ERROR') {
             return res.status(500).json({ message: 'Erreur technique : Colonnes manquantes dans la base de données (type_compte, nom_entreprise, etc.)' });
         }
 
-        res.status(500).json({ message: 'Erreur serveur lors de l'inscription.' });
+        res.status(500).json({ message: 'Erreur serveur lors de l\'inscription.' });
     }
 };
 // --- NOUVELLE FONCTION UTILITAIRE POUR G├ëN├ëRER LES TOKENS ---
@@ -183,7 +183,7 @@ const generateAndStoreTokens = async (res, user, userTable, role) => {
     const userRole = role || user.role;
     let finalCodeParrainage = user.code_parrainage;
 
-    // A. Si c'est un utilisateur et qu'il n'a pas de code (anciens comptes), on en crée un
+    // A. Si c\'est un utilisateur et qu'il n\'a pas de code (anciens comptes), on en crée un
     if (userTable === 'utilisateurs') {
         if (!finalCodeParrainage) {
             finalCodeParrainage = generateReferralCode(user.nom_utilisateur);
@@ -238,7 +238,7 @@ exports.verifyOtp = async (req, res) => {
         if (user.otp_code !== otp) return res.status(400).json({ message: "Code OTP incorrect." });
         if (new Date() > new Date(user.otp_expiration)) return res.status(400).json({ message: "Code OTP expir├⌐." });
 
-        // Si tout est bon, on v├⌐rifie l'utilisateur
+        // Si tout est bon, on v├⌐rifie l\'utilisateur
         await pool.execute(
             'UPDATE clients SET est_verifie = TRUE, otp_code = NULL, otp_expiration = NULL WHERE id = ?',
             [user.id]
@@ -290,7 +290,7 @@ exports.loginClient = async (req, res) => {
 
         // V├⌐rification cruciale pour les clients
         if (!user.est_verifie) {
-            return res.status(403).json({ message: 'Votre compte n'est pas v├⌐rifi├⌐.' });
+            return res.status(403).json({ message: 'Votre compte n\'est pas v├⌐rifi├⌐.' });
         }
 
         const isMatch = await bcrypt.compare(password, user.mot_de_passe);
@@ -406,7 +406,7 @@ exports.loginUtilisateur = async (req, res) => {
         // <-- NOUVEAU : ENREGISTREMENT DU TOKEN PUSH
         // =================================================================
         if (push_notification) {
-            // On met ├á jour le token push de l'utilisateur
+            // On met ├á jour le token push de l\'utilisateur
             await pool.execute(
                 'UPDATE utilisateurs SET push_notification = ? WHERE id = ?',
                 [push_notification, user.id]
@@ -456,7 +456,7 @@ exports.registerUtilisateur = async (req, res) => {
         await connection.beginTransaction(); // DÉBUT DE LA TRANSACTION
 
         // ==================================================================================
-        // 1. Vérifier si l'email, le nom d'utilisateur OU LE CONTACT existe déjà (CORRIGÉ)
+        // 1. Vérifier si l\'email, le nom d\'utilisateur OU LE CONTACT existe déjà (CORRIGÉ)
         // ==================================================================================
         const [existingUsers] = await connection.execute(
             'SELECT id FROM utilisateurs WHERE email = ? OR nom_utilisateur = ? OR contact = ?',
@@ -465,8 +465,8 @@ exports.registerUtilisateur = async (req, res) => {
 
         if (existingUsers.length > 0) {
             await connection.rollback();
-            // Message d'erreur mis à jour pour informer l'utilisateur
-            return res.status(409).json({ message: 'Email, nom d'utilisateur ou numéro de téléphone déjà utilisé.' });
+            // Message d\'erreur mis à jour pour informer l\'utilisateur
+            return res.status(409).json({ message: 'Email, nom d\'utilisateur ou numéro de téléphone déjà utilisé.' });
         }
 
         // 2. LOGIQUE DE PARRAINAGE
@@ -505,7 +505,7 @@ exports.registerUtilisateur = async (req, res) => {
         }
         const myCode = generateReferralCode(nom_utilisateur);
 
-        // 4. Insertion de l'utilisateur
+        // 4. Insertion de l\'utilisateur
         const [result] = await connection.execute(
             `INSERT INTO utilisateurs 
             (nom_utilisateur, email, mot_de_passe, ville, commune_choisie, est_actif,
@@ -692,7 +692,7 @@ exports.completeFacebookProfile = async (req, res) => {
         );
 
         if (existingUser.length > 0) {
-            // C'est ici qu'on bloque l'inscription comme dans registerUtilisateur
+            // C'est ici qu'on bloque l\'inscription comme dans registerUtilisateur
             return res.status(409).json({ message: 'Ce numéro de téléphone est déjà utilisé par un autre compte.' });
         }
         // =================================================================
@@ -703,7 +703,7 @@ exports.completeFacebookProfile = async (req, res) => {
             [commune_choisie, date_naissance, contact, genre, userId]
         );
 
-        // Recharger l'utilisateur
+        // Recharger l\'utilisateur
         const [rows] = await pool.execute('SELECT * FROM utilisateurs WHERE id = ?', [userId]);
         const user = rows[0];
 
@@ -759,7 +759,7 @@ exports.googleAuth = async (req, res) => {
         const photo_profil = profile.picture || null;
         const nom_utilisateur = profile.name || [prenom, nom].filter(Boolean).join(' ') || `google_user_${id_google}`;
 
-        if (!email) return res.status(400).json({ message: "Impossible de récupérer l'email." });
+        if (!email) return res.status(400).json({ message: "Impossible de récupérer l\'email." });
 
         let [rows] = await pool.execute('SELECT * FROM utilisateurs WHERE id_google = ? OR email = ?', [id_google, email]);
         let user = rows[0];
@@ -851,7 +851,7 @@ exports.refreshToken = async (req, res) => {
         // 1. V├⌐rifier si le refresh token est valide
         const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
 
-        // 2. Trouver l'utilisateur et v├⌐rifier que le token correspond ├á celui en BDD
+        // 2. Trouver l\'utilisateur et v├⌐rifier que le token correspond ├á celui en BDD
         const role = decoded.role;
         let userTable;
         if (role === 'superadmin' || role === 'admin') userTable = 'administrateurs';
@@ -891,7 +891,7 @@ exports.logout = async (req, res) => {
     // 1. R├⌐cup├⌐rer le token depuis le header Authorization
     const authHeader = req.headers.authorization;
 
-    // Si pas de header ou mal form├⌐, on consid├¿re que c'est d├⌐j├á "ok" (204 No Content)
+    // Si pas de header ou mal form├⌐, on consid├¿re que c\'est d├⌐j├á "ok" (204 No Content)
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.sendStatus(204);
     }
@@ -899,7 +899,7 @@ exports.logout = async (req, res) => {
     const token = authHeader.split(' ')[1]; // On enl├¿ve "Bearer " pour garder juste le token
 
     try {
-        // 2. V├⌐rifier le token (On utilise JWT_SECRET car c'est l'Access Token qui est dans le header)
+        // 2. V├⌐rifier le token (On utilise JWT_SECRET car c\'est l'Access Token qui est dans le header)
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
         const userId = decoded.id;
@@ -953,7 +953,7 @@ exports.logout = async (req, res) => {
 
     } catch (error) {
         console.error("Erreur lors de la d├⌐connexion:", error.message);
-        // M├¬me si le token est expir├⌐, on renvoie un succ├¿s car l'utilisateur veut partir
+        // M├¬me si le token est expir├⌐, on renvoie un succ├¿s car l\'utilisateur veut partir
         res.sendStatus(204);
     }
 };
@@ -966,7 +966,7 @@ exports.forgotPassword = async (req, res) => {
     }
 
     try {
-        // V├⌐rifier dans les trois tables si l'email existe ET a un mot de passe
+        // V├⌐rifier dans les trois tables si l\'email existe ET a un mot de passe
         let user = null;
         let userType = null;
 
@@ -1034,7 +1034,7 @@ exports.forgotPassword = async (req, res) => {
             [resetCode, resetCodeExpiration, user.id]
         );
 
-        // Envoyer l'email de r├⌐initialisation
+        // Envoyer l\'email de r├⌐initialisation
         await sendResetPasswordEmail(email, resetCode, user.nom_utilisateur || user.nom);
 
         res.status(200).json({
@@ -1267,7 +1267,7 @@ const sendResetPasswordEmail = async (email, resetCode, username) => {
 
               <div class="warning">
                   <strong>ΓÜá∩╕Å Important :</strong> Ce code expirera dans 15 minutes.
-                  Si vous n'avez pas demand├⌐ cette r├⌐initialisation, veuillez ignorer cet email.
+                  Si vous n\'avez pas demand├⌐ cette r├⌐initialisation, veuillez ignorer cet email.
               </div>
 
               <p>Pour compl├⌐ter la reinitialisation :</p>
