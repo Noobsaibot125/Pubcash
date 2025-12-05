@@ -197,13 +197,29 @@ exports.addComment = async (req, res) => {
   if (!commentaire || commentaire.trim() === '') {
     return res.status(400).json({ message: 'Le commentaire ne peut pas être vide.' });
   }
+
   try {
+    // 1. VÉRIFICATION : Est-ce que l'utilisateur a déjà commenté cette promotion ?
+    const [existing] = await pool.execute(
+      'SELECT id FROM commentaires WHERE id_utilisateur = ? AND id_promotion = ?',
+      [userId, promotionId]
+    );
+
+    if (existing.length > 0) {
+      // Si oui, on bloque et on renvoie une erreur
+      return res.status(403).json({ message: 'Vous avez déjà commenté cette promotion.' });
+    }
+
+    // 2. Si non, on procède à l'insertion
     await pool.execute(
       'INSERT INTO commentaires (id_utilisateur, id_promotion, commentaire) VALUES (?, ?, ?)',
       [userId, promotionId, commentaire]
     );
+
     res.status(201).json({ message: 'Commentaire ajouté.' });
+
   } catch (error) {
+    console.error("Erreur addComment:", error);
     res.status(500).json({ message: 'Erreur serveur' });
   }
 };
