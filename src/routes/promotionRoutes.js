@@ -6,7 +6,6 @@ const promotionController = require('../controllers/promotionController');
 const { protect } = require('../middlewares/authMiddleware');
 
 // --- ROUTES GÉNÉRALES ---
-// On remplace partout 'authMiddleware' par 'protect'
 
 // GET /api/promotions -> Récupère les promotions pour l'utilisateur connecté
 router.get('/', protect, promotionController.getPromotionsForUser);
@@ -36,10 +35,15 @@ router.post('/:promotionId/partage', protect, promotionController.sharePromotion
 // POST /api/promotions/:promotionId/comment
 router.post('/:promotionId/comment', protect, promotionController.addComment);
 
+// GET /api/promotions/:promotionId/hasComment - Vérifier si l'utilisateur a déjà commenté
+router.get('/:promotionId/hasComment', protect, promotionController.hasComment);
+
 // POST /api/promotions/:promotionId/view
 router.post('/:promotionId/view', protect, promotionController.viewPromotion);
+
 // POST /api/promotions/:promotionId/cancel
 router.post('/:promotionId/cancel', protect, promotionController.cancelPromotion);
+
 // --- ROUTE PUBLIQUE (Doit être en dernier pour ne pas confisquer les autres routes comme /historique) ---
 // GET /api/promotions/:promotionId
 router.get('/:promotionId', promotionController.getPromotionById);
