@@ -1,4 +1,4 @@
-// pubcash-api/src/controllers/promotionController.js
+﻿// pubcash-api/src/controllers/promotionController.js
 const axios = require('axios');
 const pool = require('../config/db');
 const { sendPromotionFinishedEmail } = require('../services/emailService');
@@ -203,6 +203,22 @@ exports.addComment = async (req, res) => {
       [userId, promotionId, commentaire]
     );
     res.status(201).json({ message: 'Commentaire ajouté.' });
+  } catch (error) {
+    res.status(500).json({ message: 'Erreur serveur' });
+  }
+};
+
+// Vérifier si l'utilisateur a déjà commenté
+exports.hasComment = async (req, res) => {
+  const { promotionId } = req.params;
+  const userId = req.user.id;
+
+  try {
+    const [rows] = await pool.execute(
+      'SELECT id FROM commentaires WHERE id_utilisateur = ? AND id_promotion = ?',
+      [userId, promotionId]
+    );
+    res.status(200).json({ hasComment: rows.length > 0 });
   } catch (error) {
     res.status(500).json({ message: 'Erreur serveur' });
   }
