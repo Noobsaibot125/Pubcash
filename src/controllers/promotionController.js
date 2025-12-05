@@ -234,8 +234,13 @@ exports.hasComment = async (req, res) => {
       'SELECT id FROM commentaires WHERE id_utilisateur = ? AND id_promotion = ?',
       [userId, promotionId]
     );
+    
+    // AJOUTE CE LOG DANS TON TERMINAL BACKEND POUR VÉRIFIER
+    console.log(`[DEBUG] hasComment User:${userId} Promo:${promotionId} Found:${rows.length}`);
+
     res.status(200).json({ hasComment: rows.length > 0 });
   } catch (error) {
+    console.error(error);
     res.status(500).json({ message: 'Erreur serveur' });
   }
 };
