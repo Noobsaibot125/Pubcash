@@ -460,10 +460,17 @@ exports.getPromotionsHistorique = async (req, res) => {
     const baseUrl = `${req.protocol}://${req.get('host')}`;
 
     // On ajoute 'vue' dans la liste des interactions
-    const [promotions] = await pool.execute(
-      `SELECT DISTINCT p.*, i.type_interaction, i.date_interaction
+   const [promotions] = await pool.execute(
+      `SELECT DISTINCT 
+          p.*, 
+          i.type_interaction, 
+          i.date_interaction,
+          c.id as id_client,                -- AJOUT CRUCIAL
+          c.nom_entreprise as nom_promoteur, -- AJOUT CRUCIAL
+          c.profile_image_url as photo_promoteur -- AJOUT CRUCIAL
        FROM promotions p
        JOIN interactions i ON p.id = i.id_promotion
+       JOIN clients c ON p.id_client = c.id  -- JOINTURE AJOUTÉE
        WHERE i.id_utilisateur = ? 
          AND i.type_interaction IN ('like', 'partage', 'vue')
        ORDER BY i.date_interaction DESC`,
