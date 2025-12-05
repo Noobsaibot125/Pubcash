@@ -8,6 +8,10 @@ const clientRoutes = require('./clientRoutes');
 const userRoutes = require('./userRoutes');
 const gameRoutes = require('./gameRoutes');
 const notificationRoutes = require('./notificationRoutes');
+// === NOUVELLES ROUTES MESSAGERIE ===
+const subscriptionRoutes = require('./subscriptionRoutes');
+const followRoutes = require('./followRoutes');
+const messageRoutes = require('./messageRoutes');
 
 router.use('/auth', authRoutes);
 router.use('/admin', adminRoutes);
@@ -17,5 +21,9 @@ router.use('/promotions', promotionRoutes);
 router.use('/user', userRoutes);
 router.use('/games', gameRoutes);
 router.use('/notifications', notificationRoutes);
+// === NOUVELLES ROUTES MESSAGERIE ===
+router.use('/subscriptions', subscriptionRoutes);
+router.use('/follows', followRoutes);
+router.use('/messages', messageRoutes);
 
 module.exports = router;

@@ -11,9 +11,9 @@ const protect = async (req, res, next) => {
     const token = authHeader.split(' ')[1];
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    
+
     let user;
-    
+
     // La logique interne pour trouver l'utilisateur est correcte
     if (decoded.role === 'admin' || decoded.role === 'superadmin') {
       const [rows] = await pool.execute(
@@ -47,13 +47,17 @@ const protect = async (req, res, next) => {
 
     req.user = user;
     next();
-    
+
   } catch (err) {
-    console.error('authMiddleware error:', err);
-    if (err.name === 'TokenExpiredError') {
-      return res.status(401).json({ message: 'Token expiré.' });
+    console.error('authMiddleware error:', err.message); // Log message only
+    try {
+      if (err.name === 'TokenExpiredError') {
+        return res.status(401).json({ message: 'Token expiré.' });
+      }
+      return res.status(401).json({ message: 'Token invalide.' });
+    } catch (resError) {
+      console.error('Error sending 401 response:', resError);
     }
-    return res.status(401).json({ message: 'Token invalide.' });
   }
 };
 
@@ -61,8 +65,8 @@ const protect = async (req, res, next) => {
 const authorize = (...roles) => {
   return (req, res, next) => {
     if (!roles.includes(req.user.role)) {
-      return res.status(403).json({ 
-        message: `Accès refusé. Le rôle '${req.user.role}' n'est pas autorisé à accéder à cette ressource.` 
+      return res.status(403).json({
+        message: `Accès refusé. Le rôle '${req.user.role}' n'est pas autorisé à accéder à cette ressource.`
       });
     }
     next();

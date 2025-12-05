@@ -1,5 +1,5 @@
-// ======================================================
-// --- server.js - Version corrigée pour la production ---
+﻿// ======================================================
+// --- server.js - Version corrigÃ©e pour la production ---
 // ======================================================
 
 require('dotenv').config();
@@ -25,9 +25,9 @@ const server = http.createServer(app);
 // --- NOUVELLE CONFIGURATION CORS FLEXIBLE ---
 // ======================================================
 
-// 1. Définir la liste des origines autorisées (whitelist)
+// 1. DÃ©finir la liste des origines autorisÃ©es (whitelist)
 const allowedOrigins = [
-  'http://localhost:3000',           // Développement local
+  'http://localhost:3000',           // DÃ©veloppement local
    'http://31.97.68.170',             // VOTRE IP CORRECTE (sans le 7 en trop)
    'http://31.97.68.170:80',          // Frontend sur port 80 (Apache)
    'http://31.97.68.170:3000',        // Frontend sur port 3000 (dev)
@@ -40,15 +40,15 @@ const allowedOrigins = [
    'http://www.pub-cash.com'
  ];
 
-// 2. Créer les options de configuration CORS
+// 2. CrÃ©er les options de configuration CORS
 const corsOptions = {
   origin: function (origin, callback) {
-    // Autoriser les requêtes sans origine (ex: Postman, apps mobiles) ou celles dans la whitelist
+    // Autoriser les requÃªtes sans origine (ex: Postman, apps mobiles) ou celles dans la whitelist
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
-      // Rejeter les requêtes qui ne sont pas dans la whitelist
-      callback(new Error('Cette origine n\'est pas autorisée par la politique CORS.'));
+      // Rejeter les requÃªtes qui ne sont pas dans la whitelist
+      callback(new Error('Cette origine n\'est pas autorisÃ©e par la politique CORS.'));
     }
   }
 };
@@ -63,9 +63,9 @@ const io = new Server(server, {
 // Rend 'io' accessible dans toute l'application via req.app.get('io')
 app.set('io', io);
 
-// --- Création des dossiers 'uploads' ---
+// --- CrÃ©ation des dossiers 'uploads' ---
 const uploadsDir = path.join(__dirname, 'uploads');
-const requiredDirs = ['videos', 'thumbnails', 'profile', 'background', 'landing'];
+const requiredDirs = ['videos', 'thumbnails', 'profile', 'background', 'landing', 'messages'];
 
 requiredDirs.forEach(dir => {
   const fullPath = path.join(uploadsDir, dir);
@@ -75,10 +75,10 @@ requiredDirs.forEach(dir => {
 });
 
 // --- MIDDLEWARES ---
-// Appliquer la politique CORS à toutes les routes HTTP
+// Appliquer la politique CORS Ã  toutes les routes HTTP
 app.use(cors(corsOptions)); 
 
-// IMPORTANT: Désactiver CORS pour les webhooks CinetPay (ils n'envoient pas d'origin)
+// IMPORTANT: DÃ©sactiver CORS pour les webhooks CinetPay (ils n'envoient pas d'origin)
 app.use('/api/callbacks/cinetpay/withdrawal', express.json());
 app.use('/webhook/cinetpay', express.json());
 
@@ -101,7 +101,7 @@ app.use('/uploads', (req, res, next) => {
 app.use('/uploads', express.static(uploadsDir));
 
 // ======================================================
-// --- WEBHOOKS CINETPAY (CORRIGÉS) ---
+// --- WEBHOOKS CINETPAY (CORRIGÃ‰S) ---
 // ======================================================
 
 // Webhook pour les paiements clients (existant)
@@ -114,21 +114,21 @@ app.post('/webhook/cinetpay', clientController.cinetpayNotify);
 // Route pour les retraits utilisateurs
 app.post('/api/callbacks/cinetpay/withdrawal', async (req, res) => {
   try {
-    console.log('🔔 Webhook CinetPay Retrait reçu:', JSON.stringify(req.body, null, 2));
+    console.log('ðŸ”” Webhook CinetPay Retrait reÃ§u:', JSON.stringify(req.body, null, 2));
     
     // On utilise treatment_status (VAL, ERR, NEW, CAN)
     const { client_transaction_id, treatment_status, message } = req.body;
     
     if (client_transaction_id) {
-      let statut = 'en_cours'; // Par défaut si non géré
+      let statut = 'en_cours'; // Par dÃ©faut si non gÃ©rÃ©
       
       // Mappage des statuts CinetPay Transfert
       if (treatment_status === 'VAL') { 
-        statut = 'traite'; // ✅ Succès définitif
+        statut = 'traite'; // âœ… SuccÃ¨s dÃ©finitif
       } else if (treatment_status === 'ERR' || treatment_status === 'CAN') {
-        statut = 'rejete'; // ❌ Échec ou Annulé
+        statut = 'rejete'; // âŒ Ã‰chec ou AnnulÃ©
         
-        // Restauration du solde utilisateur en cas d'échec
+        // Restauration du solde utilisateur en cas d'Ã©chec
         try {
           const [demandeRows] = await pool.execute(
             'SELECT id_utilisateur, montant FROM demandes_retrait WHERE transaction_id = ? AND statut = "en_cours"',
@@ -141,22 +141,22 @@ app.post('/api/callbacks/cinetpay/withdrawal', async (req, res) => {
               'UPDATE utilisateurs SET remuneration_utilisateur = COALESCE(remuneration_utilisateur, 0) + ? WHERE id = ?',
               [montant, id_utilisateur]
             );
-            console.log(`💰 Solde restauré pour l'utilisateur ${id_utilisateur}: +${montant} XOF`);
+            console.log(`ðŸ’° Solde restaurÃ© pour l'utilisateur ${id_utilisateur}: +${montant} XOF`);
           }
         } catch (soldeError) {
-          console.error('❌ Erreur lors de la restauration du solde:', soldeError);
+          console.error('âŒ Erreur lors de la restauration du solde:', soldeError);
         }
       }
       
-      // Mise à jour du statut dans la base de données
+      // Mise Ã  jour du statut dans la base de donnÃ©es
       await pool.execute(
         'UPDATE demandes_retrait SET statut = ?, date_traitement = NOW() WHERE transaction_id = ?',
         [statut, client_transaction_id]
       );
       
-      console.log(`📝 Statut mis à jour: ${client_transaction_id} -> ${statut}`);
+      console.log(`ðŸ“ Statut mis Ã  jour: ${client_transaction_id} -> ${statut}`);
       
-      // Notifier l'utilisateur via Socket.IO si connecté
+      // Notifier l'utilisateur via Socket.IO si connectÃ©
       try {
         const [demandeRows] = await pool.execute(
           'SELECT id_utilisateur FROM demandes_retrait WHERE transaction_id = ?',
@@ -168,18 +168,18 @@ app.post('/api/callbacks/cinetpay/withdrawal', async (req, res) => {
           io.to(`user-${userId}`).emit('withdrawal-updated', {
             requestId: client_transaction_id,
             status: statut,
-            message: message || 'Statut mis à jour'
+            message: message || 'Statut mis Ã  jour'
           });
-          console.log(`📢 Notification envoyée à l'utilisateur ${userId}`);
+          console.log(`ðŸ“¢ Notification envoyÃ©e Ã  l'utilisateur ${userId}`);
         }
       } catch (notifError) {
-        console.error('❌ Erreur lors de la notification:', notifError);
+        console.error('âŒ Erreur lors de la notification:', notifError);
       }
     }
     
     res.status(200).json({ message: 'Webhook processed successfully' });
   } catch (error) {
-    console.error('❌ Erreur webhook CinetPay Retrait:', error);
+    console.error('âŒ Erreur webhook CinetPay Retrait:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -195,10 +195,10 @@ app.use('/api', publicRoutes);
 // --- GESTION DES CONNEXIONS WEBSOCKET ---
 // ======================================================
 
-// Variable en mémoire pour stocker les utilisateurs connectés
+// Variable en mÃ©moire pour stocker les utilisateurs connectÃ©s
 let onlineUsers = {};
 
-// Fonction pour récupérer les utilisateurs en ligne depuis la base de données
+// Fonction pour rÃ©cupÃ©rer les utilisateurs en ligne depuis la base de donnÃ©es
 async function getOnlineUsers() {
   try {
     const [rows] = await pool.execute(
@@ -218,7 +218,7 @@ async function getOnlineUsers() {
       est_en_ligne: !!r.est_en_ligne
     }));
   } catch (error) {
-    console.error("Erreur lors de la récupération des utilisateurs en ligne:", error);
+    console.error("Erreur lors de la rÃ©cupÃ©ration des utilisateurs en ligne:", error);
     return [];
   }
 }
@@ -226,7 +226,7 @@ async function getOnlineUsers() {
 io.on('connection', (socket) => {
   console.log('Nouvelle connexion WebSocket:', socket.id);
 
-  // --- Logique pour les notifications ciblées (ex: retraits) ---
+  // --- Logique pour les notifications ciblÃ©es (ex: retraits) ---
   socket.on('join-user-room', (userId) => {
     socket.join(`user-${userId}`);
     console.log(`Client ${socket.id} a rejoint la room user-${userId}`);
@@ -234,65 +234,65 @@ io.on('connection', (socket) => {
 
   socket.on('leave-user-room', (userId) => {
     socket.leave(`user-${userId}`);
-    console.log(`Client ${socket.id} a quitté la room user-${userId}`);
+    console.log(`Client ${socket.id} a quittÃ© la room user-${userId}`);
   });
   
   // --- Logique pour le suivi des utilisateurs en ligne ---
   socket.on('user_online', async (userId) => {
-    // Vérifier si userId est valide
+    // VÃ©rifier si userId est valide
     if (!userId) return;
 
-    console.log(`Événement 'user_online' reçu pour l'utilisateur ${userId}`);
+    console.log(`Ã‰vÃ©nement 'user_online' reÃ§u pour l'utilisateur ${userId}`);
     onlineUsers[userId] = socket.id;
     
-    // Mettre à jour la base de données pour marquer l'utilisateur comme "en ligne"
+    // Mettre Ã  jour la base de donnÃ©es pour marquer l'utilisateur comme "en ligne"
     try {
       await pool.execute(
         'UPDATE utilisateurs SET est_en_ligne = ?, derniere_connexion = NOW() WHERE id = ?',
         [true, userId]
       );
       
-      // Envoyer la nouvelle liste d'utilisateurs connectés à tous les clients (admins)
+      // Envoyer la nouvelle liste d'utilisateurs connectÃ©s Ã  tous les clients (admins)
       const users = await getOnlineUsers();
       io.emit('update_online_users', users);
       
     } catch (dbError) {
-      console.error("Erreur BDD lors de la mise à jour du statut 'en ligne':", dbError);
+      console.error("Erreur BDD lors de la mise Ã  jour du statut 'en ligne':", dbError);
     }
   });
 
-   // --- Logique de déconnexion CORRIGÉE ---
+   // --- Logique de dÃ©connexion CORRIGÃ‰E ---
    socket.on('disconnect', async (reason) => {
-    console.log('Client déconnecté:', socket.id, 'Raison:', reason);
+    console.log('Client dÃ©connectÃ©:', socket.id, 'Raison:', reason);
 
-    // Trouver quel utilisateur s'est déconnecté
+    // Trouver quel utilisateur s'est dÃ©connectÃ©
     const userId = Object.keys(onlineUsers).find(key => onlineUsers[key] === socket.id);
     
     if (userId) {
-      console.log(`Utilisateur ${userId} déconnecté`);
+      console.log(`Utilisateur ${userId} dÃ©connectÃ©`);
       delete onlineUsers[userId];
       
-      // Mettre à jour la base de données pour marquer l'utilisateur comme "hors ligne"
+      // Mettre Ã  jour la base de donnÃ©es pour marquer l'utilisateur comme "hors ligne"
       try {
         await pool.execute(
           'UPDATE utilisateurs SET est_en_ligne = ? WHERE id = ?', 
           [false, userId]
         );
         
-        // Envoyer la liste mise à jour aux admins
+        // Envoyer la liste mise Ã  jour aux admins
         const users = await getOnlineUsers();
         io.emit('update_online_users', users);
         
         console.log(`Utilisateur ${userId} est maintenant hors ligne.`);
       } catch (dbError) {
-        console.error("Erreur BDD lors de la mise à jour du statut 'hors ligne':", dbError);
+        console.error("Erreur BDD lors de la mise Ã  jour du statut 'hors ligne':", dbError);
       }
     }
   });
 });
 
 // ======================================================
-// --- ROUTE DE SANTÉ POUR VÉRIFICATION ---
+// --- ROUTE DE SANTÃ‰ POUR VÃ‰RIFICATION ---
 // ======================================================
 
 app.get('/health', (req, res) => {
@@ -308,10 +308,10 @@ app.get('/health', (req, res) => {
 // ======================================================
 initCleanupJob(); // <--- C'est cette ligne qui active le nettoyage automatique
 
-// --- DÉMARRAGE DU SERVEUR ---
+// --- DÃ‰MARRAGE DU SERVEUR ---
 const PORT = process.env.PORT || process.env.API_PORT || 5000;
 server.listen(PORT, () => {
-  console.log(`Serveur démarré et écoute sur le port ${PORT}`);
-  console.log(`🌐 Webhook retraits disponible sur: https://pub-cash.com/api/callbacks/cinetpay/withdrawal`);
-  console.log(`🔧 Route santé disponible sur: http://localhost:${PORT}/health`);
+  console.log(`Serveur dÃ©marrÃ© et Ã©coute sur le port ${PORT}`);
+  console.log(`ðŸŒ Webhook retraits disponible sur: https://pub-cash.com/api/callbacks/cinetpay/withdrawal`);
+  console.log(`ðŸ”§ Route santÃ© disponible sur: http://localhost:${PORT}/health`);
 });
