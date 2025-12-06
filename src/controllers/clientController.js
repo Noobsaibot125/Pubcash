@@ -29,8 +29,9 @@ const ensureCinetpayTable = async () => {
 exports.getProfile = async (req, res) => {
   try {
     const clientId = req.user.id;
+    // AJOUT DE : type_compte, nom_entreprise, rccm dans le SELECT
     const [rows] = await pool.execute(
-      'SELECT id, nom, prenom, nom_utilisateur, email, telephone, commune, solde_recharge, description, profile_image_url, background_image_url FROM clients WHERE id = ?',
+      'SELECT id, nom, prenom, nom_utilisateur, email, telephone, commune, solde_recharge, description, profile_image_url, background_image_url, type_compte, nom_entreprise, rccm FROM clients WHERE id = ?',
       [clientId]
     );
     if (rows.length === 0) {
@@ -58,41 +59,63 @@ exports.getProfile = async (req, res) => {
     res.status(500).json({ message: 'Erreur serveur' });
   }
 };
-// pubcash-api/src/controllers/clientController.js
+
+// 2. Mise à jour de updateProfile pour gérer la condition Entreprise vs Particulier
 exports.updateProfile = async (req, res) => {
   const clientId = req.user.id;
-  const { nom, prenom, nom_utilisateur, telephone, description, newPassword, currentPassword } = req.body;
+  // On récupère aussi nom_entreprise et rccm du body
+  const { nom, prenom, nom_utilisateur, telephone, description, newPassword, currentPassword, nom_entreprise, rccm } = req.body;
 
   try {
-    // Validation basique
-    if (!nom || !prenom || !nom_utilisateur) {
-      return res.status(400).json({ message: "Le nom, le prénom et le nom d'utilisateur sont requis." });
+    // ÉTAPE 1 : Récupérer le profil actuel pour connaître le type de compte et vérifier le mdp
+    const [rows] = await pool.execute('SELECT type_compte, mot_de_passe FROM clients WHERE id = ?', [clientId]);
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ message: 'Client non trouvé.' });
+    }
+    const user = rows[0];
+    const isEntreprise = user.type_compte === 'entreprise';
+
+    // ÉTAPE 2 : Validation conditionnelle
+    if (isEntreprise) {
+        // Pour une entreprise : Nom entreprise requis
+        if (!nom_entreprise) {
+             return res.status(400).json({ message: "Le nom de l'entreprise est requis." });
+        }
+        // Note: RCCM est rarement modifiable, mais on peut le laisser optionnel ou requis selon ta logique
+    } else {
+        // Pour un particulier : Nom et Prénom requis
+        if (!nom || !prenom || !nom_utilisateur) {
+            return res.status(400).json({ message: "Le nom, le prénom et le nom d'utilisateur sont requis." });
+        }
     }
 
-    // Si un currentPassword est fourni, vérifier sa validité AVANT toute mise à jour
+    // ÉTAPE 3 : Vérification du mot de passe actuel
     if (currentPassword) {
-      const [rows] = await pool.execute('SELECT mot_de_passe FROM clients WHERE id = ?', [clientId]);
-      if (!rows || rows.length === 0) {
-        return res.status(404).json({ message: 'Client non trouvé.' });
-      }
-      const user = rows[0];
       const isMatch = await bcrypt.compare(currentPassword, user.mot_de_passe);
       if (!isMatch) {
         return res.status(401).json({ message: "Mot de passe incorrect." });
       }
-      // si match => on continue (on vérifiera plus tard si changement de mot de passe demandé)
     } else {
-      // Si aucune confirmation n'est fournie, on refuse la mise à jour (contrainte de sécurité)
       return res.status(400).json({ message: "Veuillez confirmer votre mot de passe pour enregistrer les modifications." });
     }
 
-    // À ce stade, currentPassword est valide : on peut mettre à jour les informations
-    await pool.execute(
-      'UPDATE clients SET nom = ?, prenom = ?, nom_utilisateur = ?, telephone = ?, description = ? WHERE id = ?',
-      [nom, prenom, nom_utilisateur, telephone || null, description || null, clientId]
-    );
+    // ÉTAPE 4 : Mise à jour conditionnelle en base de données
+    if (isEntreprise) {
+        // Mise à jour Entreprise (on ignore nom/prenom qui sont NULL)
+        // On permet de modifier nom_entreprise, telephone, description, et eventuellement pseudo/rccm
+        await pool.execute(
+            'UPDATE clients SET nom_entreprise = ?, nom_utilisateur = ?, rccm = ?, telephone = ?, description = ? WHERE id = ?',
+            [nom_entreprise, nom_utilisateur || null, rccm || null, telephone || null, description || null, clientId]
+        );
+    } else {
+        // Mise à jour Particulier
+        await pool.execute(
+            'UPDATE clients SET nom = ?, prenom = ?, nom_utilisateur = ?, telephone = ?, description = ? WHERE id = ?',
+            [nom, prenom, nom_utilisateur, telephone || null, description || null, clientId]
+        );
+    }
 
-    // Si l'utilisateur souhaite changer son mot de passe (newPassword fourni), effectuer la mise à jour
+    // ÉTAPE 5 : Mise à jour du mot de passe si demandé
     if (newPassword) {
       const hashedNewPassword = await bcrypt.hash(newPassword, 10);
       await pool.execute('UPDATE clients SET mot_de_passe = ? WHERE id = ?', [hashedNewPassword, clientId]);
