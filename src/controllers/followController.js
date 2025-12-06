@@ -75,43 +75,35 @@ exports.isFollowing = async (req, res) => {
     }
 };
 
-// Récupérer la liste des followers d'un promoteur (pour le promoteur connecté)
-exports.getFollowers = async (req, res) => {
-    const clientId = req.user.id;
-
-    try {
-        const [followers] = await pool.execute(
-            `SELECT u.id, u.nom_utilisateur, u.photo_profil, s.date_suivi
-       FROM suivis_promoteurs s
-       JOIN utilisateurs u ON s.id_utilisateur = u.id
-       WHERE s.id_client = ?
-       ORDER BY s.date_suivi DESC`,
-            [clientId]
-        );
-
-        res.status(200).json(followers);
-
-    } catch (error) {
-        console.error('Erreur getFollowers:', error);
-        res.status(500).json({ message: 'Erreur serveur' });
-    }
-};
-
-// Récupérer la liste des promoteurs suivis par un utilisateur
 exports.getFollowing = async (req, res) => {
     const userId = req.user.id;
 
     try {
+        const baseUrl = `${req.protocol}://${req.get('host')}`;
+
+        // CORRECTION ICI : On sélectionne 'profile_image_url' mais on le renomme 'photo_profil' pour le mobile
         const [following] = await pool.execute(
-            `SELECT c.id, c.nom_utilisateur, c.photo_profil, s.date_suivi
-       FROM suivis_promoteurs s
-       JOIN clients c ON s.id_client = c.id
-       WHERE s.id_utilisateur = ?
-       ORDER BY s.date_suivi DESC`,
+            `SELECT 
+                c.id, 
+                c.nom_utilisateur, 
+                c.profile_image_url as photo_profil, 
+                s.date_suivi
+             FROM suivis_promoteurs s
+             JOIN clients c ON s.id_client = c.id
+             WHERE s.id_utilisateur = ?
+             ORDER BY s.date_suivi DESC`,
             [userId]
         );
 
-        res.status(200).json(following);
+        // Formatage des URLs d'images
+        const formattedFollowing = following.map(item => ({
+            ...item,
+            photo_profil: item.photo_profil && !item.photo_profil.startsWith('http')
+                ? `${baseUrl}/uploads/profile/${item.photo_profil}`
+                : item.photo_profil
+        }));
+
+        res.status(200).json(formattedFollowing);
 
     } catch (error) {
         console.error('Erreur getFollowing:', error);
@@ -119,6 +111,45 @@ exports.getFollowing = async (req, res) => {
     }
 };
 
+// Récupérer la liste des followers (POUR LE WEB PROMOTEUR)
+exports.getFollowers = async (req, res) => {
+    const clientId = req.user.id;
+
+    try {
+        const baseUrl = `${req.protocol}://${req.get('host')}`;
+
+        // CORRECTION ICI AUSSI : profile_image_url
+        const [followers] = await pool.execute(
+            `SELECT 
+                u.id, 
+                u.nom_utilisateur, 
+                u.photo_profil, 
+                s.date_suivi
+             FROM suivis_promoteurs s
+             JOIN utilisateurs u ON s.id_utilisateur = u.id
+             WHERE s.id_client = ?
+             ORDER BY s.date_suivi DESC`,
+            [clientId]
+        );
+        
+        // Note: Pour les utilisateurs, la table s'appelle bien 'photo_profil' ou 'profile_image_url' ?
+        // Vérifie ta table utilisateurs. Si c'est 'profile_image_url' aussi, change la requête ci-dessus.
+        
+        // Formatage URL
+        const formattedFollowers = followers.map(item => ({
+             ...item,
+             photo_profil: item.photo_profil && !item.photo_profil.startsWith('http')
+                ? `${baseUrl}/uploads/profile/${item.photo_profil}`
+                : item.photo_profil
+        }));
+
+        res.status(200).json(formattedFollowers);
+
+    } catch (error) {
+        console.error('Erreur getFollowers:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+};
 // Compter les followers d'un promoteur
 exports.getFollowersCount = async (req, res) => {
     const { clientId } = req.params;

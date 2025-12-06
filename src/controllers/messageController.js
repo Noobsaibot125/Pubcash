@@ -203,34 +203,55 @@ exports.getConversations = async (req, res) => {
 exports.getMessages = async (req, res) => {
     const userId = req.user.id;
     const userType = req.user.role === 'client' ? 'client' : 'utilisateur';
-    const { contactId, contactType } = req.params;
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 50;
+    
+    // On force la conversion en entier pour éviter les bugs SQL
+    const contactId = parseInt(req.params.contactId, 10);
+    const contactType = req.params.contactType;
+    
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 50;
     const offset = (page - 1) * limit;
 
+    // Sécurité basique
+    if (isNaN(contactId)) {
+        return res.status(400).json({ message: "ID contact invalide" });
+    }
+
     try {
-        const [messages] = await pool.execute(
-            `SELECT * FROM messages 
-       WHERE ((id_expediteur = ? AND type_expediteur = ? AND id_destinataire = ? AND type_destinataire = ?)
-          OR (id_expediteur = ? AND type_expediteur = ? AND id_destinataire = ? AND type_destinataire = ?))
-       ORDER BY date_envoi DESC
-       LIMIT ? OFFSET ?`,
-            [userId, userType, contactId, contactType, contactId, contactType, userId, userType, limit, offset]
-        );
+        const query = `
+            SELECT * FROM messages 
+            WHERE (
+                (id_expediteur = ? AND type_expediteur = ? AND id_destinataire = ? AND type_destinataire = ?)
+                OR 
+                (id_expediteur = ? AND type_expediteur = ? AND id_destinataire = ? AND type_destinataire = ?)
+            )
+            ORDER BY date_envoi DESC
+            LIMIT ${limit} OFFSET ${offset}
+        `;
+        
+        // ASTUCE : J'ai sorti LIMIT et OFFSET du tableau des paramètres '?' et je les ai mis directement dans la string
+        // (c'est safe car on a fait parseInt juste avant). Cela résout souvent les problèmes de drivers MySQL récalcitrants.
 
-        // Marquer les messages reçus comme lus
-        await pool.execute(
+        const params = [
+            userId, userType, contactId, contactType,  // Cas 1 : J'envoie
+            contactId, contactType, userId, userType   // Cas 2 : Je reçois
+        ];
+
+        const [messages] = await pool.execute(query, params);
+
+        // Marquer les messages reçus comme lus (en tâche de fond, sans await bloquant)
+        pool.execute(
             `UPDATE messages SET lu = TRUE 
-       WHERE id_expediteur = ? AND type_expediteur = ? 
-       AND id_destinataire = ? AND type_destinataire = ? AND lu = FALSE`,
+             WHERE id_expediteur = ? AND type_expediteur = ? 
+             AND id_destinataire = ? AND type_destinataire = ? AND lu = FALSE`,
             [contactId, contactType, userId, userType]
-        );
+        ).catch(err => console.error("Erreur update lu:", err));
 
-        res.status(200).json(messages.reverse()); // Inverser pour ordre chronologique
+        res.status(200).json(messages.reverse());
 
     } catch (error) {
         console.error('Erreur getMessages:', error);
-        res.status(500).json({ message: 'Erreur serveur' });
+        res.status(500).json({ message: 'Erreur serveur', detail: error.message });
     }
 };
 
