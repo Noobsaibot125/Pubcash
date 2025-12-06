@@ -79,15 +79,9 @@ exports.getFollowing = async (req, res) => {
     const userId = req.user.id;
 
     try {
-        const baseUrl = `${req.protocol}://${req.get('host')}`;
-
-        // CORRECTION ICI : On sélectionne 'profile_image_url' mais on le renomme 'photo_profil' pour le mobile
+        // CORRECTION ICI : c.profile_image_url AS photo_profil
         const [following] = await pool.execute(
-            `SELECT 
-                c.id, 
-                c.nom_utilisateur, 
-                c.profile_image_url as photo_profil, 
-                s.date_suivi
+            `SELECT c.id, c.nom_utilisateur, c.profile_image_url AS photo_profil, s.date_suivi
              FROM suivis_promoteurs s
              JOIN clients c ON s.id_client = c.id
              WHERE s.id_utilisateur = ?
@@ -95,15 +89,7 @@ exports.getFollowing = async (req, res) => {
             [userId]
         );
 
-        // Formatage des URLs d'images
-        const formattedFollowing = following.map(item => ({
-            ...item,
-            photo_profil: item.photo_profil && !item.photo_profil.startsWith('http')
-                ? `${baseUrl}/uploads/profile/${item.photo_profil}`
-                : item.photo_profil
-        }));
-
-        res.status(200).json(formattedFollowing);
+        res.status(200).json(following);
 
     } catch (error) {
         console.error('Erreur getFollowing:', error);

@@ -157,13 +157,16 @@ exports.getConversations = async (req, res) => {
             const [contactType, contactId] = key.split('_');
             let contactInfo = null;
 
-            if (contactType === 'client') {
+           if (contactType === 'client') {
+                // === CORRECTION IMPORTANTE ICI ===
+                // La table clients utilise 'profile_image_url'
                 const [client] = await pool.execute(
-                    'SELECT id, nom_utilisateur, photo_profil FROM clients WHERE id = ?',
+                    'SELECT id, nom_utilisateur, profile_image_url AS photo_profil FROM clients WHERE id = ?',
                     [contactId]
                 );
                 contactInfo = client[0];
             } else {
+                // La table utilisateurs utilise bien 'photo_profil'
                 const [user] = await pool.execute(
                     'SELECT id, nom_utilisateur, photo_profil FROM utilisateurs WHERE id = ?',
                     [contactId]
