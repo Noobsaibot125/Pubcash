@@ -419,7 +419,7 @@ exports.viewPromotion = async (req, res) => {
         ? `${baseUrl}/uploads/thumbnails/${promotion.thumbnail_url}`
         : promotion.thumbnail_url;
 
-    await notificationService.envoyerNotification(
+   notificationService.envoyerNotification(
       userId, 
       'video_regardee', 
       'Félicitations !', 
@@ -431,7 +431,7 @@ exports.viewPromotion = async (req, res) => {
         thumbnail_url: fullThumbnailUrl,
         titre: promotion.titre
       }
-    ).catch(e => console.error("Err Notif:", e));
+    ).catch(e => console.error("Err Notif Background:", e)); // On catch l'erreur ici pour ne pas crasher
 
    // 12. Fin de promo ?
     if (newVues >= promotion.vues_potentielles || newBudget < montant) {
@@ -439,7 +439,8 @@ exports.viewPromotion = async (req, res) => {
         'UPDATE promotions SET statut = ?, date_fin = NOW() WHERE id = ?',
         ['termine', promotionId]
       );
-      await notifyClientOfFinishedPromotion(promotionId, connection, req);
+      // Pareil ici, pas de await si possible, ou on laisse car c'est rare
+      notifyClientOfFinishedPromotion(promotionId, connection, req).catch(e => console.error(e));
     }
 
     await connection.commit();
