@@ -47,7 +47,7 @@ const imageFileFilter = (req, file, cb) => {
   }
 };
 
-const limits = { fileSize: 5 * 1024 * 1024 }; // 5MB
+const limits = { fileSize: 20 * 1024 * 1024 }; // 20MB
 
 // CORRECTION : Multer config avec le bon field name
 const uploadProfile = multer({ 
