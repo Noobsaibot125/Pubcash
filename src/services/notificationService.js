@@ -66,7 +66,11 @@ const envoyerNotificationPush = async (token, titre, contenu, donnees = {}) => {
                 priority: 'high',
                 notification: {
                     sound: 'default',
-                    channelId: 'pubcash_notifications',
+                    // 👇 MODIFICATION 1 : Mettre v3 comme dans l'appli Flutter
+                    channelId: 'pubcash_notifications_v3', 
+                    
+                    // 👇 MODIFICATION 2 : Ajouter la couleur Orange
+                    color: '#FF8C42',
                 },
             },
             apns: {
