@@ -164,17 +164,20 @@ exports.submitPuzzle = async (req, res) => {
         );
 
         // --- AJOUT NOTIFICATION PUZZLE ---
-        await notificationService.envoyerNotification(
+        notificationService.envoyerNotification(
             userId,
             'jeu_gagne',
             `${game.titre || 'Puzzle'}, Vous avez reçu ${points} pts`,
             `Félicitations pour votre victoire !`,
             { points, game_id: gameId, game_type: 'puzzle' }
-        ).catch(err => console.error('Erreur notification puzzle:', err));
+        ).catch(err => console.error('Erreur notification puzzle (background):', err));
+        
         // ---------------------------------
 
         await connection.commit();
         delete puzzleSessions[userId];
+        
+        // La réponse partira beaucoup plus vite maintenant
         res.status(200).json({ success: true, points, message: 'Félicitations !' });
 
     } catch (error) {
