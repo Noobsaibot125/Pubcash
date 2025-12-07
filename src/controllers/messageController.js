@@ -3,7 +3,7 @@ const pool = require('../config/db');
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
-
+const notificationService = require('../services/notificationService');
 // Configuration multer pour upload de fichiers
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
@@ -101,8 +101,39 @@ exports.sendMessage = async (req, res) => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [senderId, senderType, destinataireId, destinataireType, contenu || '', typeContenu, urlMedia, nomFichier, tailleFichier]
         );
+// --- DEBUT MODIFICATION : Envoi de la notification Push ---
+        
+        // On n'envoie la notif que si le destinataire est un utilisateur mobile
+        if (destinataireType === 'utilisateur') {
+            try {
+                // Récupérer le nom de l'expéditeur pour la notification
+                let senderName = "Un promoteur";
+                if (req.user.nom_utilisateur) senderName = req.user.nom_utilisateur;
+                else if (req.user.nom) senderName = req.user.nom; // Fallback
 
-        // TODO: Envoyer notification push au destinataire
+                const notifTitle = "Nouveau message";
+                const notifBody = `${senderName} vous a envoyé un message.`;
+                
+                // Appel au service de notification
+                // On utilise 'nouveau_message' comme type pour le gérer côté mobile
+                await notificationService.envoyerNotification(
+                    destinataireId,
+                    'nouveau_message', 
+                    notifTitle,
+                    notifBody,
+                    {
+                        type: 'nouveau_message',
+                        sender_id: senderId,
+                        sender_type: senderType,
+                        message_id: result.insertId
+                    }
+                );
+            } catch (notifError) {
+                console.error("Erreur lors de l'envoi de la notification push message:", notifError);
+                // On ne bloque pas la réponse si la notif échoue
+            }
+        }
+        // --- FIN MODIFICATION ---
 
         res.status(201).json({
             message: 'Message envoyé',
