@@ -10,7 +10,7 @@ const notificationService = require('../services/notificationService');
 exports.getPromotionsForUser = async (req, res) => {
   const userId = req.user.id;
   // userCommune correspond à 'commune_choisie' dans la table utilisateurs
-  const userCommune = req.user.commune_choisie || null; 
+  const userCommune = req.user.commune_choisie || null;
   const filter = req.query.filter || 'ma_commune'; // Filtre venant de l'UI utilisateur
 
   try {
@@ -56,7 +56,7 @@ exports.getPromotionsForUser = async (req, res) => {
                 OR p.ciblage_commune = ?
             )
     `;
-    
+
     // Paramètres pour l'âge et la commune
     params.push(age, age, userCommune);
 
@@ -64,25 +64,25 @@ exports.getPromotionsForUser = async (req, res) => {
     // Si l'utilisateur clique sur "Ma Commune" dans l'appli, il veut voir SEULEMENT les promos de sa commune
     // et pas celles qui sont nationales ('toutes').
     if (filter === 'ma_commune' && userCommune) {
-        query += ` AND p.ciblage_commune = ?`;
-        params.push(userCommune);
-    } 
+      query += ` AND p.ciblage_commune = ?`;
+      params.push(userCommune);
+    }
     // Si l'utilisateur veut voir tout ce qui est disponible pour lui (National + Local)
     else if (filter === 'toutes') {
-        // Pas de restriction supplémentaire, la clause WHERE de base suffit
+      // Pas de restriction supplémentaire, la clause WHERE de base suffit
     }
     else if (filter === 'argent') {
-       query += ` AND pk.remuneration = 50`;
+      query += ` AND pk.remuneration = 50`;
     }
     else if (filter === 'gold') {
-       query += ` AND pk.remuneration = 75`;
+      query += ` AND pk.remuneration = 75`;
     }
     else if (filter === 'diamant') {
-       query += ` AND pk.remuneration = 100`;
+      query += ` AND pk.remuneration = 100`;
     }
 
     // Exclusion des vues déjà faites (inchangé)
-   query += ` AND NOT EXISTS (
+    query += ` AND NOT EXISTS (
         SELECT 1 FROM interactions i 
         WHERE i.id_promotion = p.id 
         AND i.id_utilisateur = ? 
@@ -234,7 +234,7 @@ exports.hasComment = async (req, res) => {
       'SELECT id FROM commentaires WHERE id_utilisateur = ? AND id_promotion = ?',
       [userId, promotionId]
     );
-    
+
     // AJOUTE CE LOG DANS TON TERMINAL BACKEND POUR VÉRIFIER
     console.log(`[DEBUG] hasComment User:${userId} Promo:${promotionId} Found:${rows.length}`);
 
@@ -248,7 +248,7 @@ exports.hasComment = async (req, res) => {
 exports.viewPromotion = async (req, res) => {
   const { promotionId } = req.params;
   const userId = req.user.id;
-  const { device_id } = req.body; 
+  const { device_id } = req.body;
 
   const connection = await pool.getConnection();
 
@@ -259,63 +259,63 @@ exports.viewPromotion = async (req, res) => {
 
     // 1. VÉRIFICATION PRÉALABLE : L'utilisateur a-t-il Liké ET Partagé ?
     const [conditions] = await connection.execute(
-        `SELECT COUNT(DISTINCT type_interaction) as count 
+      `SELECT COUNT(DISTINCT type_interaction) as count 
          FROM interactions 
          WHERE id_utilisateur = ? 
          AND id_promotion = ? 
          AND type_interaction IN ('like', 'partage')`,
-        [userId, promotionId]
+      [userId, promotionId]
     );
 
     if (conditions[0].count < 2) {
-        await connection.rollback();
-        console.log(`[DEBUG] 🚫 Refusé : L'utilisateur n'a pas fini les étapes.`);
-        return res.status(400).json({ message: "Vous devez Liker et Partager avant de valider la vue." });
+      await connection.rollback();
+      console.log(`[DEBUG] 🚫 Refusé : L'utilisateur n'a pas fini les étapes.`);
+      return res.status(400).json({ message: "Vous devez Liker et Partager avant de valider la vue." });
     }
 
     // 2. SÉCURITÉ DEVICE ID & NETTOYAGE FRAUDE
     if (device_id) {
-        const [deviceCheck] = await connection.execute(
-            `SELECT id FROM interactions 
+      const [deviceCheck] = await connection.execute(
+        `SELECT id FROM interactions 
              WHERE id_promotion = ? 
              AND type_interaction = 'vue' 
              AND device_id = ?`,
-            [promotionId, device_id]
-        );
+        [promotionId, device_id]
+      );
 
-        if (deviceCheck.length > 0) {
-            console.log(`[DEBUG] 🚫 Fraude Device ID détectée.`);
+      if (deviceCheck.length > 0) {
+        console.log(`[DEBUG] 🚫 Fraude Device ID détectée.`);
 
-            // --- DEBUT DU NETTOYAGE ---
-            // On considère que s'il fraude, ses likes et partages ne valent rien.
-            
-            // A. On décrémente les compteurs de la promotion (pour que le promoteur ait les vrais chiffres)
-            // On utilise GREATEST(x-1, 0) pour ne jamais descendre en dessous de 0
-            await connection.execute(
-                `UPDATE promotions 
+        // --- DEBUT DU NETTOYAGE ---
+        // On considère que s'il fraude, ses likes et partages ne valent rien.
+
+        // A. On décrémente les compteurs de la promotion (pour que le promoteur ait les vrais chiffres)
+        // On utilise GREATEST(x-1, 0) pour ne jamais descendre en dessous de 0
+        await connection.execute(
+          `UPDATE promotions 
                  SET likes = GREATEST(likes - 1, 0), 
                      partages = GREATEST(partages - 1, 0) 
                  WHERE id = ?`,
-                [promotionId]
-            );
+          [promotionId]
+        );
 
-            // B. On supprime ses interactions 'like' et 'partage' de la table interactions
-            await connection.execute(
-                `DELETE FROM interactions 
+        // B. On supprime ses interactions 'like' et 'partage' de la table interactions
+        await connection.execute(
+          `DELETE FROM interactions 
                  WHERE id_utilisateur = ? 
                  AND id_promotion = ? 
                  AND type_interaction IN ('like', 'partage')`,
-                [userId, promotionId]
-            );
-            
-            // C. On COMMIT (Sauvegarde) ce nettoyage avant de rejeter
-            await connection.commit();
-            // --- FIN DU NETTOYAGE ---
+          [userId, promotionId]
+        );
 
-            return res.status(403).json({ 
-                message: 'Cet appareil a déjà bénéficié de cette offre promotionnelle.' 
-            });
-        }
+        // C. On COMMIT (Sauvegarde) ce nettoyage avant de rejeter
+        await connection.commit();
+        // --- FIN DU NETTOYAGE ---
+
+        return res.status(403).json({
+          message: 'Cet appareil a déjà bénéficié de cette offre promotionnelle.'
+        });
+      }
     }
 
     // 3. Vérifier doublon Utilisateur (Au cas où il change de téléphone)
@@ -363,7 +363,7 @@ exports.viewPromotion = async (req, res) => {
     console.log(`[DEBUG] ✅ Validation Vue + Gain (${montant} FCFA)`);
     await connection.execute(
       'INSERT INTO interactions (id_utilisateur, id_promotion, type_interaction, device_id) VALUES (?, ?, ?, ?)',
-      [userId, promotionId, 'vue', device_id] 
+      [userId, promotionId, 'vue', device_id]
     );
 
     // 7. Mise à jour Promotion
@@ -386,11 +386,11 @@ exports.viewPromotion = async (req, res) => {
 
     // 9. Bonus Parrainage
     if (promotion.nom_pack?.toLowerCase() === 'diamant') {
-        const [userRows] = await connection.execute('SELECT parrain_id FROM utilisateurs WHERE id = ?', [userId]);
-        if (userRows.length > 0 && userRows[0].parrain_id) {
-            await connection.execute('UPDATE utilisateurs SET points = points + 5 WHERE id = ?', [userRows[0].parrain_id]);
-            await connection.execute('INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, ?, ?, NOW())', [userRows[0].parrain_id, 5, 'bonus_parrainage_diamant']);
-        }
+      const [userRows] = await connection.execute('SELECT parrain_id FROM utilisateurs WHERE id = ?', [userId]);
+      if (userRows.length > 0 && userRows[0].parrain_id) {
+        await connection.execute('UPDATE utilisateurs SET points = points + 5 WHERE id = ?', [userRows[0].parrain_id]);
+        await connection.execute('INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, ?, ?, NOW())', [userRows[0].parrain_id, 5, 'bonus_parrainage_diamant']);
+      }
     }
 
     // 10. Bonus Quotidien
@@ -405,54 +405,6 @@ exports.viewPromotion = async (req, res) => {
       'SELECT videos_watched FROM daily_activity WHERE user_id = ? AND date = ?',
       [userId, today]
     );
-    if (activityRows.length > 0 && activityRows[0].videos_watched === 10) {
-        await connection.execute('UPDATE utilisateurs SET points = COALESCE(points, 0) + 5 WHERE id = ?', [userId]);
-        await connection.execute('INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, 5, ?, NOW())', [userId, 'bonus_10_videos_jour']);
-    }
-
-    // 11. Notification
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const fullVideoUrl = promotion.url_video && !promotion.url_video.startsWith('http')
-        ? `${baseUrl}/uploads/videos/${promotion.url_video}`
-        : promotion.url_video;
-    const fullThumbnailUrl = promotion.thumbnail_url && !promotion.thumbnail_url.startsWith('http')
-        ? `${baseUrl}/uploads/thumbnails/${promotion.thumbnail_url}`
-        : promotion.thumbnail_url;
-
-    await notificationService.envoyerNotification(
-      userId, 
-      'video_regardee', 
-      'Félicitations !', 
-      `Vous avez gagné ${montant} FCFA`, 
-      { 
-        montant, 
-        promotion_id: promotionId,
-        url_video: fullVideoUrl,
-        thumbnail_url: fullThumbnailUrl,
-        titre: promotion.titre
-      }
-    ).catch(e => console.error("Err Notif:", e));
-
-    // 12. Fin de promo ?
-    if (newVues >= promotion.vues_potentielles || newBudget < montant) {
-      await connection.execute(
-        'UPDATE promotions SET statut = ?, date_fin = NOW() WHERE id = ?',
-        ['termine', promotionId]
-      );
-      await notifyClientOfFinishedPromotion(promotionId, connection, req);
-    }
-
-    await connection.commit();
-   // --- MODIFICATION ICI : On renvoie le montant au mobile ---
-    res.status(200).json({ 
-        success: true, 
-        message: 'Vue validée avec succès.', 
-        montant: montant // <--- AJOUT CRUCIAL
-    });
-
-  } catch (error) {
-    await connection.rollback();
-    console.error("\n[DEBUG] ❌ Erreur viewPromotion:", error);
     res.status(500).json({ message: 'Erreur serveur' });
   } finally {
     connection.release();
@@ -465,7 +417,7 @@ exports.getPromotionsHistorique = async (req, res) => {
     const baseUrl = `${req.protocol}://${req.get('host')}`;
 
     // On ajoute 'vue' dans la liste des interactions
-   const [promotions] = await pool.execute(
+    const [promotions] = await pool.execute(
       `SELECT DISTINCT 
           p.*, 
           i.type_interaction, 
@@ -486,9 +438,9 @@ exports.getPromotionsHistorique = async (req, res) => {
 
     // Formatage URL
     const promotionsWithUrls = promotions.map(promo => ({
-       ...promo,
-       url_video: promo.url_video ? `${baseUrl}/uploads/videos/${promo.url_video}` : null,
-       thumbnail_url: promo.thumbnail_url ? `${baseUrl}/uploads/thumbnails/${promo.thumbnail_url}` : null,
+      ...promo,
+      url_video: promo.url_video ? `${baseUrl}/uploads/videos/${promo.url_video}` : null,
+      thumbnail_url: promo.thumbnail_url ? `${baseUrl}/uploads/thumbnails/${promo.thumbnail_url}` : null,
     }));
 
     return res.status(200).json(promotionsWithUrls);
@@ -626,7 +578,7 @@ async function getCinetPayToken() {
 const httpsAgent = new https.Agent({ family: 4 });
 exports.withdrawEarnings = async (req, res) => {
   const userId = req.user.id;
-  const { operator, phoneNumber, amount } = req.body; 
+  const { operator, phoneNumber, amount } = req.body;
 
   // --- 1. VALIDATIONS ---
   const withdrawalAmount = parseInt(amount, 10);
@@ -636,9 +588,9 @@ exports.withdrawEarnings = async (req, res) => {
   }
 
   if (withdrawalAmount < 200) {
-    return res.status(400).json({ 
+    return res.status(400).json({
       message: `Le montant minimum de retrait est de 200 XOF. Veuillez augmenter votre demande.`,
-      details: `Le montant minimum pour cette transaction est de 200 XOF.` 
+      details: `Le montant minimum pour cette transaction est de 200 XOF.`
     });
   }
 
@@ -684,7 +636,7 @@ exports.withdrawEarnings = async (req, res) => {
     );
 
     // Création de l'historique (Statut initial: EN_COURS)
-   await connection.execute(
+    await connection.execute(
       `INSERT INTO demandes_retrait 
        (id_utilisateur, montant, operateur_mobile, statut, date_demande, transaction_id, numero_telephone) 
        VALUES (?, ?, ?, ?, NOW(), ?, ?)`,
@@ -698,41 +650,41 @@ exports.withdrawEarnings = async (req, res) => {
     // 4. APPEL CINETPAY
     try {
       console.log("🔐 Authentification CinetPay...");
-      const token = await getCinetPayToken(); 
+      const token = await getCinetPayToken();
 
       // Infos utilisateur
       const emailContact = user.email || 'client@pubcash.com';
       const nomContact = user.nom || 'Client';
       const prenomContact = user.prenom || 'PubCash';
       const paymentMethod = operator === 'wave' ? 'WAVECI' : null;
-      
+
       // Notification URL (Doit être pub-cash.com en prod)
       let notifyUrl = `${process.env.PRODUCTION_URL}/api/callbacks/cinetpay/withdrawal`;
       if (!process.env.PRODUCTION_URL || notifyUrl.includes('votredomaine.com')) {
-          notifyUrl = 'https://pub-cash.com/api/callbacks/cinetpay/withdrawal'; 
+        notifyUrl = 'https://pub-cash.com/api/callbacks/cinetpay/withdrawal';
       }
 
       // A. AJOUT DU CONTACT
       const paramsContact = new URLSearchParams();
       paramsContact.append('data', JSON.stringify([{
-          prefix: '225', phone: cleanPhone, name: prenomContact, surname: nomContact, email: emailContact
+        prefix: '225', phone: cleanPhone, name: prenomContact, surname: nomContact, email: emailContact
       }]));
 
       await axios.post(`https://client.cinetpay.com/v1/transfer/contact?token=${token}&lang=fr`, paramsContact, {
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-      }).catch(() => {});
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      }).catch(() => { });
 
       // B. TRANSFERT
       const transferObject = {
-          amount: String(withdrawalAmount),
-          phone: cleanPhone,
-          prefix: '225', 
-          notify_url: notifyUrl,
-          client_transaction_id: transactionId,
-          email: emailContact,
-          name: nomContact,
-          surname: prenomContact,
-          ...(paymentMethod && { payment_method: paymentMethod }) 
+        amount: String(withdrawalAmount),
+        phone: cleanPhone,
+        prefix: '225',
+        notify_url: notifyUrl,
+        client_transaction_id: transactionId,
+        email: emailContact,
+        name: nomContact,
+        surname: prenomContact,
+        ...(paymentMethod && { payment_method: paymentMethod })
       };
 
       const paramsTransfer = new URLSearchParams();
@@ -749,12 +701,12 @@ exports.withdrawEarnings = async (req, res) => {
 
       const apiResponse = await axios(configTransfer);
       const result = apiResponse.data;
-      
+
       console.log("✅ Réponse CinetPay:", JSON.stringify(result));
 
       // 5. MISE À JOUR DU STATUT (Utilisation de pool.execute car la connexion est relâchée)
       if (String(result.code) === '0') {
-        
+
         // Mise à jour de 'en_cours' à 'traite'
         await pool.execute(
           'UPDATE demandes_retrait SET statut = ?, date_traitement = NOW() WHERE transaction_id = ?',
@@ -767,43 +719,43 @@ exports.withdrawEarnings = async (req, res) => {
           'retrait_complete',
           'Retrait réussi',
           `Validé ✓ ${withdrawalAmount} Fcfa`,
-          { montant: withdrawalAmount, transaction_id: transactionId, statut: 'succes', operator: operator,numero_telephone: cleanPhone }
+          { montant: withdrawalAmount, transaction_id: transactionId, statut: 'succes', operator: operator, numero_telephone: cleanPhone }
         ).catch(err => console.error('Erreur notification retrait_complete:', err));
 
         return res.status(200).json({ message: 'Retrait effectué avec succès !' });
 
       } else {
         // Si le code n'est pas 0, on jette une erreur pour passer au bloc catch.
-        throw { response: { data: result } }; 
+        throw { response: { data: result } };
       }
 
     } catch (apiError) {
       console.error("❌ ERREUR CINETPAY:", apiError.response?.data || apiError.message);
       const responseData = apiError.response?.data || {};
       const errorCode = responseData.data?.[0]?.code || responseData.code || 'UNKNOWN';
-      
+
       // --- GESTION DES ERREURS PROFESSIONNELLES ---
       let professionalMessage = 'Erreur inattendue. Veuillez contacter l\'administrateur.';
 
       switch (errorCode) {
         // Erreur de fonds CinetPay insuffisants (Code 602 est un code CinetPay générique)
         case 602: // INSUFFICIENT_BALANCE
-        case 722: 
-        case 'ERROR_PM_AMOUNT': 
+        case 722:
+        case 'ERROR_PM_AMOUNT':
           professionalMessage = 'Transaction non disponible : Le service de retrait est momentanément indisponible.';
           break;
-        
-        case 725: 
-        case 726: 
+
+        case 725:
+        case 726:
           professionalMessage = `Le numéro de téléphone ${cleanPhone} est incorrect ou inactif. Veuillez vérifier votre numéro.`;
           break;
 
         // Cas 5 : Opérateur indisponible
-        case 727: 
-        case 728: 
+        case 727:
+        case 728:
           professionalMessage = `L'opérateur ${operator.toUpperCase()} est indisponible. Veuillez réessayer plus tard.`;
           break;
-        
+
         default:
           // Toutes les autres erreurs inconnues (garder un message de type 500)
           professionalMessage = 'Erreur serveur inattendue. Veuillez contacter le support.';
@@ -817,18 +769,18 @@ exports.withdrawEarnings = async (req, res) => {
       );
       // Mise à jour statut REJETE
       await pool.execute(
-          'UPDATE demandes_retrait SET statut = ?, date_traitement = NOW() WHERE transaction_id = ?',
-          ['rejete', transactionId]
+        'UPDATE demandes_retrait SET statut = ?, date_traitement = NOW() WHERE transaction_id = ?',
+        ['rejete', transactionId]
       );
-      
+
       // Envoi de la notification de rejet
       await notificationService.envoyerNotification(
-        userId, 'retrait_echec', 'Échec du retrait', `Le transfert a échoué. ${withdrawalAmount} Fcfa remboursés.`, 
-        { montant: withdrawalAmount, transaction_id: transactionId, statut: 'echec',operator: operator,numero_telephone: cleanPhone }
+        userId, 'retrait_echec', 'Échec du retrait', `Le transfert a échoué. ${withdrawalAmount} Fcfa remboursés.`,
+        { montant: withdrawalAmount, transaction_id: transactionId, statut: 'echec', operator: operator, numero_telephone: cleanPhone }
       ).catch(err => console.error('Erreur notification retrait_echec:', err));
 
       // 🛑 RENVOI UN STATUT 400 POUR LES ERREURS DE VALIDATION
-      return res.status(400).json({ 
+      return res.status(400).json({
         message: professionalMessage, // <--- Le message clair
         details: `CinetPay Code: ${errorCode}` // <--- Le détail technique pour le débug
       });
