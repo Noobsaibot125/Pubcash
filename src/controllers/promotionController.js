@@ -433,7 +433,7 @@ exports.viewPromotion = async (req, res) => {
       }
     ).catch(e => console.error("Err Notif:", e));
 
-    // 12. Fin de promo ?
+   // 12. Fin de promo ?
     if (newVues >= promotion.vues_potentielles || newBudget < montant) {
       await connection.execute(
         'UPDATE promotions SET statut = ?, date_fin = NOW() WHERE id = ?',
@@ -443,11 +443,13 @@ exports.viewPromotion = async (req, res) => {
     }
 
     await connection.commit();
-   // --- MODIFICATION ICI : On renvoie le montant au mobile ---
+
+    // === MODIFICATION ICI ===
+    // On renvoie le montant au mobile pour l'affichage immédiat
     res.status(200).json({ 
         success: true, 
         message: 'Vue validée avec succès.', 
-        montant: montant // <--- AJOUT CRUCIAL
+        montant: montant  // <--- AJOUT IMPORTANT
     });
 
   } catch (error) {
