@@ -50,31 +50,33 @@ exports.sendMessage = async (req, res) => {
         return res.status(400).json({ message: 'Contenu ou fichier requis' });
     }
 
+    const connection = await pool.getConnection(); // On utilise une connexion pour tout faire proprement
+
     try {
-        // Si c'est un client qui envoie, vérifier son abonnement
+        // 1. Vérifications (Abonnement / Suivi)
         if (senderType === 'client') {
-            const [subscription] = await pool.execute(
-                `SELECT id FROM abonnements_promoteurs 
-         WHERE id_client = ? AND statut = 'actif' AND date_fin > NOW()`,
+            const [subscription] = await connection.execute(
+                `SELECT id FROM abonnements_promoteurs WHERE id_client = ? AND statut = 'actif' AND date_fin > NOW()`,
                 [senderId]
             );
             if (subscription.length === 0) {
-                return res.status(403).json({ message: 'Abonnement premium requis pour envoyer des messages' });
+                connection.release();
+                return res.status(403).json({ message: 'Abonnement premium requis.' });
             }
         }
 
-        // Si c'est un utilisateur qui envoie, vérifier qu'il suit le promoteur
         if (senderType === 'utilisateur' && destinataireType === 'client') {
-            const [follow] = await pool.execute(
+            const [follow] = await connection.execute(
                 'SELECT id FROM suivis_promoteurs WHERE id_utilisateur = ? AND id_client = ?',
                 [senderId, destinataireId]
             );
             if (follow.length === 0) {
-                return res.status(403).json({ message: 'Vous devez suivre ce promoteur pour lui envoyer un message' });
+                connection.release();
+                return res.status(403).json({ message: 'Vous devez suivre ce promoteur.' });
             }
         }
 
-        // Préparer les données du message
+        // 2. Préparer les données du message
         let typeContenu = 'texte';
         let urlMedia = null;
         let nomFichier = null;
@@ -82,58 +84,70 @@ exports.sendMessage = async (req, res) => {
 
         if (req.file) {
             const ext = path.extname(req.file.originalname).toLowerCase();
-            if (['.jpg', '.jpeg', '.png', '.gif'].includes(ext)) {
-                typeContenu = 'image';
-            } else if (['.mp4', '.mov', '.avi'].includes(ext)) {
-                typeContenu = 'video';
-            } else {
-                typeContenu = 'fichier';
-            }
+            if (['.jpg', '.jpeg', '.png', '.gif'].includes(ext)) typeContenu = 'image';
+            else if (['.mp4', '.mov', '.avi'].includes(ext)) typeContenu = 'video';
+            else typeContenu = 'fichier';
+            
             urlMedia = `/uploads/messages/${req.file.filename}`;
             nomFichier = req.file.originalname;
             tailleFichier = req.file.size;
         }
 
-        // Insérer le message
-        const [result] = await pool.execute(
+        // 3. Insérer le message
+        const [result] = await connection.execute(
             `INSERT INTO messages 
        (id_expediteur, type_expediteur, id_destinataire, type_destinataire, contenu, type_contenu, url_media, nom_fichier, taille_fichier)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [senderId, senderType, destinataireId, destinataireType, contenu || '', typeContenu, urlMedia, nomFichier, tailleFichier]
         );
-// --- DEBUT MODIFICATION : Envoi de la notification Push ---
-        
-        // On n'envoie la notif que si le destinataire est un utilisateur mobile
-        if (destinataireType === 'utilisateur') {
-            try {
-                // Récupérer le nom de l'expéditeur pour la notification
-                let senderName = "Un promoteur";
-                if (req.user.nom_utilisateur) senderName = req.user.nom_utilisateur;
-                else if (req.user.nom) senderName = req.user.nom; // Fallback
 
-                const notifTitle = "Nouveau message";
-                const notifBody = `${senderName} vous a envoyé un message.`;
-                
-                // Appel au service de notification
-                // On utilise 'nouveau_message' comme type pour le gérer côté mobile
-                await notificationService.envoyerNotification(
-                    destinataireId,
-                    'nouveau_message', 
-                    notifTitle,
-                    notifBody,
-                    {
-                        type: 'nouveau_message',
-                        sender_id: senderId,
-                        sender_type: senderType,
-                        message_id: result.insertId
-                    }
+        // 4. Notification Push
+        if (destinataireType === 'utilisateur') {
+            // === CORRECTION MAJEURE ICI ===
+            // On récupère les infos FRAÎCHES de l'expéditeur depuis la BDD
+            let senderName = "Un promoteur";
+            let senderPhoto = "";
+
+            if (senderType === 'client') {
+                const [clientRows] = await connection.execute(
+                    'SELECT nom_utilisateur, nom, profile_image_url FROM clients WHERE id = ?', 
+                    [senderId]
                 );
-            } catch (notifError) {
-                console.error("Erreur lors de l'envoi de la notification push message:", notifError);
-                // On ne bloque pas la réponse si la notif échoue
+                if (clientRows.length > 0) {
+                    senderName = clientRows[0].nom_utilisateur || clientRows[0].nom;
+                    senderPhoto = clientRows[0].profile_image_url || "";
+                }
+            } else {
+                const [userRows] = await connection.execute(
+                    'SELECT nom_utilisateur, nom, photo_profil FROM utilisateurs WHERE id = ?', 
+                    [senderId]
+                );
+                if (userRows.length > 0) {
+                    senderName = userRows[0].nom_utilisateur || userRows[0].nom;
+                    senderPhoto = userRows[0].photo_profil || "";
+                }
             }
+
+            console.log(`[DEBUG NOTIF] Envoi de: ${senderName}, Photo: ${senderPhoto}`);
+
+            // Envoi asynchrone (ne bloque pas la réponse)
+            notificationService.envoyerNotification(
+                destinataireId,
+                'nouveau_message',
+                'Nouveau message', // Titre générique, le mobile utilisera sender_name si dispo
+                `${senderName} vous a envoyé un message.`,
+                {
+                    type: 'nouveau_message',
+                    sender_id: senderId,
+                    sender_type: senderType,
+                    sender_name: senderName,
+                    sender_photo: senderPhoto, // La photo est maintenant garantie d'être celle de la BDD
+                    message_id: result.insertId
+                }
+            ).catch(err => console.error("Erreur Push Notif:", err));
         }
-        // --- FIN MODIFICATION ---
+
+        connection.release();
 
         res.status(201).json({
             message: 'Message envoyé',
@@ -143,11 +157,11 @@ exports.sendMessage = async (req, res) => {
         });
 
     } catch (error) {
+        if (connection) connection.release();
         console.error('Erreur sendMessage:', error);
         res.status(500).json({ message: 'Erreur serveur' });
     }
 };
-
 // Récupérer les conversations (liste des contacts)
 exports.getConversations = async (req, res) => {
     const userId = req.user.id;
