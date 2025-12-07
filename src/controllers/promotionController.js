@@ -443,7 +443,12 @@ exports.viewPromotion = async (req, res) => {
     }
 
     await connection.commit();
-    res.status(200).json({ message: 'Vue validée avec succès.' });
+   // --- MODIFICATION ICI : On renvoie le montant au mobile ---
+    res.status(200).json({ 
+        success: true, 
+        message: 'Vue validée avec succès.', 
+        montant: montant // <--- AJOUT CRUCIAL
+    });
 
   } catch (error) {
     await connection.rollback();
