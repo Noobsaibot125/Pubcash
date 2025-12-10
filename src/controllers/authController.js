@@ -1258,7 +1258,7 @@ const sendResetPasswordEmail = async (email, resetCode, username) => {
           </div>
           <div class="content">
               <p>Bonjour <strong>${username}</strong>,</p>
-              <p>Vous avez demand├⌐ la reinitialisation de votre mot de passe PubCash.</p>
+              <p>Vous avez demandé la reinitialisation de votre mot de passe PubCash.</p>
               
               <div class="code-container">
                   <p><strong>Votre code de verification :</strong></p>
@@ -1266,11 +1266,11 @@ const sendResetPasswordEmail = async (email, resetCode, username) => {
               </div>
 
               <div class="warning">
-                  <strong>ΓÜá∩╕Å Important :</strong> Ce code expirera dans 15 minutes.
-                  Si vous n\'avez pas demand├⌐ cette r├⌐initialisation, veuillez ignorer cet email.
+                  <strong>Important :</strong> Ce code expirera dans 15 minutes.
+                  Si vous n\'avez pas demande cette reinitialisation, veuillez ignorer cet email.
               </div>
 
-              <p>Pour compl├⌐ter la reinitialisation :</p>
+              <p>Pour completer la reinitialisation :</p>
               <ol>
                   <li>Copiez le code ci-dessus</li>
                   <li>Rendez-vous sur la page de reinitialisation</li>

@@ -22,7 +22,8 @@ router.post('/quiz/submit', protect, gameController.submitQuiz);
 
 // Lister les jeux disponibles (puzzles, quiz)
 router.get('/list', protect, gameController.getGames);
-
+// GET /api/games/stats/promotion/:promotionId
+router.get('/stats/promotion/:promotionId', protect, gameController.getQuizStatsByPromotion);
 // --- ROUTES ADMIN ---
 // (Idéalement, ajouter un middleware 'admin' ici)
 router.post('/create', protect, gameController.createGame);

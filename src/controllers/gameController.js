@@ -357,4 +357,50 @@ exports.deletepuzzle = async (req, res) => {
         console.error('Erreur deletepuzzle:', error);
         res.status(500).json({ message: 'Erreur serveur' });
     }
+    
+};
+exports.getQuizStatsByPromotion = async (req, res) => {
+    const { promotionId } = req.params;
+
+    try {
+        // 1. Trouver le jeu associé à la promotion
+        const [games] = await pool.execute(
+            'SELECT id, type, titre FROM games WHERE promotion_id = ?', 
+            [promotionId]
+        );
+
+        if (games.length === 0) {
+            return res.status(200).json({ hasGame: false });
+        }
+
+        const game = games[0];
+
+        // 2. Calculer les stats depuis l'historique
+        // resultat = 'gagne' (Bonne réponse) ou 'perdu' (Mauvaise réponse)
+        const [stats] = await pool.execute(`
+            SELECT 
+                SUM(CASE WHEN resultat = 'gagne' THEN 1 ELSE 0 END) as bonnes_reponses,
+                SUM(CASE WHEN resultat = 'perdu' THEN 1 ELSE 0 END) as mauvaises_reponses,
+                COUNT(*) as total_joueurs
+            FROM game_history 
+            WHERE game_id = ?
+        `, [game.id]);
+
+        const data = stats[0];
+
+        res.status(200).json({
+            hasGame: true,
+            gameType: game.type,
+            gameTitle: game.titre,
+            stats: {
+                bonnes: parseInt(data.bonnes_reponses || 0),
+                mauvaises: parseInt(data.mauvaises_reponses || 0),
+                total: parseInt(data.total_joueurs || 0)
+            }
+        });
+
+    } catch (error) {
+        console.error('Erreur getQuizStatsByPromotion:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
 };
