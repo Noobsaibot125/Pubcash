@@ -74,7 +74,10 @@ const authorize = (...roles) => {
 };
 
 // L'export est maintenant correct car 'protect' est bien défini juste au-dessus
+const admin = authorize('admin', 'administrateur', 'superadmin');
+
 module.exports = {
   protect,
-  authorize
+  authorize,
+  admin
 };

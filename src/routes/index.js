@@ -12,6 +12,7 @@ const notificationRoutes = require('./notificationRoutes');
 const subscriptionRoutes = require('./subscriptionRoutes');
 const followRoutes = require('./followRoutes');
 const messageRoutes = require('./messageRoutes');
+const feedbackRoutes = require('./feedbackRoutes');
 
 router.use('/auth', authRoutes);
 router.use('/admin', adminRoutes);
@@ -25,5 +26,6 @@ router.use('/notifications', notificationRoutes);
 router.use('/subscriptions', subscriptionRoutes);
 router.use('/follows', followRoutes);
 router.use('/messages', messageRoutes);
+router.use('/feedback', feedbackRoutes);
 
 module.exports = router;
