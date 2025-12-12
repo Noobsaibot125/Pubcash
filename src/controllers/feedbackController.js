@@ -1,13 +1,65 @@
 const pool = require('../config/db');
+const path = require('path');
+const fs = require('fs');
+const multer = require('multer');
 
-// Créer un nouveau feedback
+// Configuration multer pour upload de fichiers feedback
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const uploadDir = path.join(__dirname, '../../uploads/feedback');
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, uniqueSuffix + path.extname(file.originalname));
+    }
+});
+
+const upload = multer({
+    storage,
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max
+    fileFilter: (req, file, cb) => {
+        const allowedTypes = /jpeg|jpg|png|gif|pdf|doc|docx|xls|xlsx/;
+        const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+        const mimetype = allowedTypes.test(file.mimetype) ||
+            file.mimetype.includes('image') ||
+            file.mimetype.includes('pdf') ||
+            file.mimetype.includes('document') ||
+            file.mimetype.includes('sheet');
+        if (mimetype || extname) {
+            return cb(null, true);
+        }
+        cb(new Error('Type de fichier non autorisé'));
+    }
+});
+
+exports.uploadMiddleware = upload.single('file');
+
+// Créer un nouveau feedback (avec fichier optionnel)
 exports.createFeedback = async (req, res) => {
     const userId = req.user.id;
-    const userType = req.user.role === 'client' ? 'client' : 'utilisateur'; // standardise le type
+    const userType = req.user.role === 'client' ? 'client' : 'utilisateur';
     const { full_name, email, phone, message } = req.body;
 
     if (!message) {
         return res.status(400).json({ message: 'Le message est requis' });
+    }
+
+    // Gestion du fichier uploadé
+    let fileUrl = null;
+    let fileName = null;
+    let fileType = null;
+
+    if (req.file) {
+        fileUrl = `/uploads/feedback/${req.file.filename}`;
+        fileName = req.file.originalname;
+        const ext = path.extname(req.file.originalname).toLowerCase();
+        if (['.jpg', '.jpeg', '.png', '.gif'].includes(ext)) fileType = 'image';
+        else if (['.pdf'].includes(ext)) fileType = 'pdf';
+        else fileType = 'document';
     }
 
     const connection = await pool.getConnection();
@@ -23,24 +75,21 @@ exports.createFeedback = async (req, res) => {
         );
 
         const feedbackId = result.insertId;
-
-        // 2. Ajouter le message initial dans la table des messages (pour l'historique de conversation)
-        // Note: on map 'utilisateur' -> 'user' pour l'enum de la DB si nécessaire, ou on garde 'utilisateur' si l'enum le permet
-        // Mon script a créé ENUM('user', 'admin', 'client'). Donc je vais utiliser 'user' pour 'utilisateur'.
-
         const dbSenderType = userType === 'utilisateur' ? 'user' : userType;
 
+        // 2. Ajouter le message initial avec fichier si présent
         await connection.execute(
-            `INSERT INTO feedback_messages (feedback_id, sender_type, sender_id, message) 
-             VALUES (?, ?, ?, ?)`,
-            [feedbackId, dbSenderType, userId, message]
+            `INSERT INTO feedback_messages (feedback_id, sender_type, sender_id, message, file_url, file_name, file_type) 
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [feedbackId, dbSenderType, userId, message, fileUrl, fileName, fileType]
         );
 
         await connection.commit();
 
         res.status(201).json({
             message: 'Feedback envoyé avec succès',
-            feedbackId
+            feedbackId,
+            fileUrl
         });
 
     } catch (error) {
@@ -64,19 +113,15 @@ exports.getMyFeedbacks = async (req, res) => {
              ORDER BY created_at DESC`,
             [userId, userType]
         );
-
         res.status(200).json(rows);
-
     } catch (error) {
         console.error('Erreur getMyFeedbacks:', error);
         res.status(500).json({ message: 'Erreur serveur' });
     }
 };
 
-// --- AJOUT ADMIN ---
 // Récupérer TOUS les feedbacks (pour l'admin)
 exports.getAllFeedbacks = async (req, res) => {
-    // Note: Ajouter middleware admin pour protéger
     try {
         const [rows] = await pool.execute(
             `SELECT * FROM feedback ORDER BY created_at DESC`
@@ -88,42 +133,50 @@ exports.getAllFeedbacks = async (req, res) => {
     }
 };
 
-// Admin répond au feedback
+// Admin répond au feedback (avec fichier optionnel)
 exports.adminReplyToFeedback = async (req, res) => {
-    const adminId = req.user.id; // L'admin doit être loggé
+    const adminId = req.user.id;
     const feedbackId = req.params.feedbackId;
     const { message } = req.body;
 
-    if (!message) return res.status(400).json({ message: 'Message vide' });
+    if (!message && !req.file) return res.status(400).json({ message: 'Message ou fichier requis' });
+
+    // Gestion fichier
+    let fileUrl = null;
+    let fileName = null;
+    let fileType = null;
+
+    if (req.file) {
+        fileUrl = `/uploads/feedback/${req.file.filename}`;
+        fileName = req.file.originalname;
+        const ext = path.extname(req.file.originalname).toLowerCase();
+        if (['.jpg', '.jpeg', '.png', '.gif'].includes(ext)) fileType = 'image';
+        else if (['.pdf'].includes(ext)) fileType = 'pdf';
+        else fileType = 'document';
+    }
 
     try {
-        // Vérifier que le feedback existe
         const [feedback] = await pool.execute('SELECT id FROM feedback WHERE id = ?', [feedbackId]);
         if (feedback.length === 0) return res.status(404).json({ message: "Feedback introuvable" });
 
-        // On insert avec sender_type = 'admin'
         await pool.execute(
-            `INSERT INTO feedback_messages (feedback_id, sender_type, sender_id, message) 
-             VALUES (?, 'admin', ?, ?)`,
-            [feedbackId, adminId, message]
+            `INSERT INTO feedback_messages (feedback_id, sender_type, sender_id, message, file_url, file_name, file_type) 
+             VALUES (?, 'admin', ?, ?, ?, ?, ?)`,
+            [feedbackId, adminId, message || '', fileUrl, fileName, fileType]
         );
 
-        // Optionnel: Mettre à jour le statut du ticket si besoin
-        // await pool.execute("UPDATE feedback SET status = 'replied' WHERE id = ?", [feedbackId]);
-
-        res.status(201).json({ message: 'Réponse envoyée par admin' });
+        res.status(201).json({ message: 'Réponse envoyée par admin', fileUrl });
 
     } catch (error) {
         console.error('Erreur adminReplyToFeedback:', error);
         res.status(500).json({ message: 'Erreur serveur' });
     }
 };
-// -------------------
 
 // Récupérer les messages d'un feedback spécifique
 exports.getFeedbackMessages = async (req, res) => {
     const userId = req.user.id;
-    const userRole = req.user.role; // 'admin', 'client', 'utilisateur'
+    const userRole = req.user.role;
     const feedbackId = req.params.feedbackId;
 
     try {
@@ -136,9 +189,8 @@ exports.getFeedbackMessages = async (req, res) => {
             return res.status(404).json({ message: 'Feedback introuvable' });
         }
 
-        // Autorisation : Soit c'est mon feedback, soit je suis admin
         let authorized = false;
-        if (userRole === 'admin' || userRole === 'administrateur') {
+        if (userRole === 'admin' || userRole === 'administrateur' || userRole === 'superadmin') {
             authorized = true;
         } else {
             if (feedback[0].user_id === userId) authorized = true;
@@ -163,17 +215,30 @@ exports.getFeedbackMessages = async (req, res) => {
     }
 };
 
-// Ajouter une réponse (message) à un feedback (Pour utilisateur normal)
+// Ajouter une réponse à un feedback (utilisateur/client avec fichier optionnel)
 exports.replyToFeedback = async (req, res) => {
     const userId = req.user.id;
     const userType = req.user.role === 'client' ? 'client' : 'utilisateur';
     const feedbackId = req.params.feedbackId;
     const { message } = req.body;
 
-    if (!message) return res.status(400).json({ message: 'Message vide' });
+    if (!message && !req.file) return res.status(400).json({ message: 'Message ou fichier requis' });
+
+    // Gestion fichier
+    let fileUrl = null;
+    let fileName = null;
+    let fileType = null;
+
+    if (req.file) {
+        fileUrl = `/uploads/feedback/${req.file.filename}`;
+        fileName = req.file.originalname;
+        const ext = path.extname(req.file.originalname).toLowerCase();
+        if (['.jpg', '.jpeg', '.png', '.gif'].includes(ext)) fileType = 'image';
+        else if (['.pdf'].includes(ext)) fileType = 'pdf';
+        else fileType = 'document';
+    }
 
     try {
-        // Vérif ownership
         const [feedback] = await pool.execute(
             'SELECT user_id FROM feedback WHERE id = ?',
             [feedbackId]
@@ -185,12 +250,12 @@ exports.replyToFeedback = async (req, res) => {
         const dbSenderType = userType === 'utilisateur' ? 'user' : userType;
 
         await pool.execute(
-            `INSERT INTO feedback_messages (feedback_id, sender_type, sender_id, message) 
-             VALUES (?, ?, ?, ?)`,
-            [feedbackId, dbSenderType, userId, message]
+            `INSERT INTO feedback_messages (feedback_id, sender_type, sender_id, message, file_url, file_name, file_type) 
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [feedbackId, dbSenderType, userId, message || '', fileUrl, fileName, fileType]
         );
 
-        res.status(201).json({ message: 'Réponse envoyée' });
+        res.status(201).json({ message: 'Réponse envoyée', fileUrl });
 
     } catch (error) {
         console.error('Erreur replyToFeedback:', error);
