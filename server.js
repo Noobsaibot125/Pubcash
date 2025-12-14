@@ -18,6 +18,8 @@ const publicRoutes = require('./src/routes/publicRoutes');
 // --- AJOUT : Import du service de nettoyage ---
 const initCleanupJob = require('./src/services/cleanupService');
 const geoMiddleware = require('./src/middlewares/geoMiddleware');
+const maintenanceMiddleware = require('./src/middlewares/maintenanceMiddleware');
+const settingsRoutes = require('./src/routes/settingsRoutes');
 // --- Initialisation d'Express et du serveur HTTP ---
 const app = express();
 const server = http.createServer(app);
@@ -197,6 +199,12 @@ app.post('/api/callbacks/cinetpay/withdrawal', async (req, res) => {
 // --- RESTRICTION GÃ‰OGRAPHIQUE (CÃ”TE D'IVOIRE) ---
 // ======================================================
 app.use(geoMiddleware);
+
+// --- ROUTES SETTINGS (Doit être avant le middleware de maintenance pour pouvoir le désactiver) ---
+app.use('/api/settings', settingsRoutes);
+
+// --- MIDDLEWARE MAINTENANCE ---
+app.use(maintenanceMiddleware);
 
 app.use('/api', mainRouter);
 app.use('/api', publicRoutes);
