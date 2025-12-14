@@ -15,7 +15,8 @@ exports.getProfileForUser = async (req, res) => {
       `SELECT 
           id, nom, prenom, nom_utilisateur, email, contact, 
           commune_choisie, date_naissance, photo_profil, image_background,
-          code_parrainage, points
+          code_parrainage, points,
+          id_google, id_facebook
        FROM utilisateurs 
        WHERE id = ?`,
       [userId]
