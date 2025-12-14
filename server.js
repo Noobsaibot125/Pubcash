@@ -22,6 +22,10 @@ const geoMiddleware = require('./src/middlewares/geoMiddleware');
 const app = express();
 const server = http.createServer(app);
 
+// Activer 'trust proxy' pour que Express récupère la vraie IP derrière Nginx/Apache/Cloudflare
+// Cela permet à req.ip et x-forwarded-for d'être corrects
+app.set('trust proxy', 1);
+
 // ======================================================
 // --- NOUVELLE CONFIGURATION CORS FLEXIBLE ---
 // ======================================================
@@ -306,6 +310,24 @@ app.get('/health', (req, res) => {
     status: 'OK',
     message: 'Serveur Pub-Cash en ligne',
     timestamp: new Date().toISOString()
+  });
+});
+
+// Route de debug pour vérifier l'IP vue par le serveur
+app.get('/api/check-geo', (req, res) => {
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const ipClean = ip ? (ip.includes(',') ? ip.split(',')[0].trim() : ip) : null;
+  const geoip = require('geoip-lite');
+  const geo = geoip.lookup(ipClean);
+
+  res.json({
+    your_ip_raw: ip,
+    your_ip_clean: ipClean,
+    detected_country: geo ? geo.country : 'Unknown',
+    headers: {
+      'x-forwarded-for': req.headers['x-forwarded-for'],
+      'cf-connecting-ip': req.headers['cf-connecting-ip'] // Si Cloudflare
+    }
   });
 });
 
