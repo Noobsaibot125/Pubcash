@@ -371,33 +371,6 @@ exports.getClientPromotions = async (req, res) => {
       res.status(500).json({ message: 'Erreur serveur' });
   }
 };
-exports.getGlobalStats = async (req, res) => {
-  const clientId = req.user.id;
-  try {
-      const [rows] = await pool.execute(
-          `SELECT 
-              COUNT(CASE WHEN i.type_interaction = 'vue' THEN 1 END) as total_vues,
-              COUNT(CASE WHEN i.type_interaction = 'like' THEN 1 END) as total_likes,
-              COUNT(CASE WHEN i.type_interaction = 'partage' THEN 1 END) as total_partages
-           FROM interactions i
-           INNER JOIN promotions p ON i.id_promotion = p.id
-           WHERE p.id_client = ? AND p.statut != 'termine'`,
-          [clientId]
-      );
-      
-      const stats = rows[0] || {}; // Assure qu'on a un objet même si la requête ne retourne rien
-
-      res.status(200).json({
-          total_vues: Number(stats.total_vues) || 0,
-          total_likes: Number(stats.total_likes) || 0,
-          total_partages: Number(stats.total_partages) || 0,
-      });
-
-  } catch (error) {
-      console.error("Erreur getGlobalStats (version corrigée):", error);
-      res.status(500).json({ message: 'Erreur serveur' });
-  }
-};
 exports.getPromotionHistory = async (req, res) => {
     const clientId = req.user.id;
     try {
@@ -849,30 +822,42 @@ exports.rechargeAccount = async (req, res) => {
   };
   
   // Récupérer les statistiques globales
-  exports.getGlobalStats = async (req, res) => {
-    const clientId = req.user.id;
-    try {
-        const [rows] = await pool.execute(
-            `SELECT 
-                COUNT(CASE WHEN i.type_interaction = 'vue' THEN 1 END) as total_vues,
-                COUNT(CASE WHEN i.type_interaction = 'like' THEN 1 END) as total_likes,
-                COUNT(CASE WHEN i.type_interaction = 'partage' THEN 1 END) as total_partages
-             FROM interactions i
-             INNER JOIN promotions p ON i.id_promotion = p.id
-             WHERE p.id_client = ? AND p.statut != 'termine'`,
-            [clientId]
-        );
-        const stats = rows[0] || {};
-        res.status(200).json({
-            total_vues: Number(stats.total_vues) || 0,
-            total_likes: Number(stats.total_likes) || 0,
-            total_partages: Number(stats.total_partages) || 0,
-        });
-    } catch (error) {
-        console.error("Erreur getGlobalStats (corrigée):", error);
-        res.status(500).json({ message: 'Erreur serveur' });
-    }
-  };
+ exports.getGlobalStats = async (req, res) => {
+  const clientId = req.user.id;
+  try {
+      // On utilise Promise.all pour exécuter les deux requêtes en parallèle (plus rapide)
+      const [interactionRows, followerRows] = await Promise.all([
+          pool.execute(
+              `SELECT 
+                  COUNT(CASE WHEN i.type_interaction = 'vue' THEN 1 END) as total_vues,
+                  COUNT(CASE WHEN i.type_interaction = 'like' THEN 1 END) as total_likes,
+                  COUNT(CASE WHEN i.type_interaction = 'partage' THEN 1 END) as total_partages
+               FROM interactions i
+               INNER JOIN promotions p ON i.id_promotion = p.id
+               WHERE p.id_client = ? AND p.statut != 'termine'`,
+              [clientId]
+          ),
+          pool.execute(
+              `SELECT COUNT(*) as total_followers FROM suivis_promoteurs WHERE id_client = ?`,
+              [clientId]
+          )
+      ]);
+      
+      const stats = interactionRows[0][0] || {};
+      const followers = followerRows[0][0] || {};
+
+      res.status(200).json({
+          total_vues: Number(stats.total_vues) || 0,
+          total_likes: Number(stats.total_likes) || 0,
+          total_partages: Number(stats.total_partages) || 0,
+          total_followers: Number(followers.total_followers) || 0 // C'est cette ligne qui affiche le "1"
+      });
+
+  } catch (error) {
+      console.error("Erreur getGlobalStats:", error);
+      res.status(500).json({ message: 'Erreur serveur' });
+  }
+};
   exports.getDetailedStats = async (req, res) => {
     const clientId = req.user.id;
     

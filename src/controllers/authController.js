@@ -288,6 +288,19 @@ exports.loginClient = async (req, res) => {
 
         if (!user) return res.status(401).json({ message: 'Email ou mot de passe incorrect.' });
 
+        // --- DEBUG : Voir ce que la BDD renvoie ---
+        console.log(`Tentative de connexion : ${user.email} | Bloqué ? : ${user.est_bloque}`);
+
+        // --- CORRECTION RENFORCÉE ---
+        // On vérifie si c'est 1 (nombre) ou true (booléen)
+        if (user.est_bloque == 1 || user.est_bloque === true) {
+            console.log(`Connexion REFUSÉE pour ${user.email} (Compte bloqué)`);
+            return res.status(403).json({ 
+                message: "Votre compte a été bloqué par l'administrateur. Veuillez contacter le support." 
+            });
+        }
+        // -----------------------------
+
         // Vérification cruciale pour les clients
         if (!user.est_verifie) {
             return res.status(403).json({ message: 'Votre compte n\'est pas vérifié.' });
@@ -303,18 +316,13 @@ exports.loginClient = async (req, res) => {
             const daysDifference = (currentDate - requestDate) / (1000 * 3600 * 24);
 
             if (daysDifference > 45) {
-                // Le délai est dépassé, le compte est considéré comme supprimé
                 return res.status(403).json({ message: "Ce compte a été supprimé définitivement." });
             } else {
-                // Le délai court toujours : on RÉACTIVE le compte automatiquement
                 await pool.execute('UPDATE clients SET deletion_requested_at = NULL WHERE id = ?', [user.id]);
-                // On peut loguer ça ou ajouter un message dans la réponse si besoin
                 console.log(`Compte client ${user.id} réactivé automatiquement.`);
             }
         }
-        // ---------------------------------------------
 
-        // (user.role est 'client' par défaut dans la BDD)
         await generateAndStoreTokens(res, user, 'clients');
 
     } catch (error) {
@@ -322,7 +330,6 @@ exports.loginClient = async (req, res) => {
         res.status(500).json({ message: 'Erreur serveur' });
     }
 };
-
 // --- HELPER: GESTION DU BONUS DE CONNEXION QUOTIDIENNE ---
 const handleDailyLogin = async (userId) => {
     const today = new Date().toISOString().split('T')[0];
@@ -404,7 +411,12 @@ exports.loginUtilisateur = async (req, res) => {
         const user = rows[0];
 
         if (!user) return res.status(401).json({ message: 'Identifiant ou mot de passe incorrect.' });
-
+// --- AJOUT VÉRIFICATION BLOCAGE ---
+if (user.est_bloque == 1) {
+    return res.status(403).json({ 
+        message: "Votre compte a été suspendu par l'administrateur. Contactez le support." 
+    });
+}
         // G├⌐rer les comptes Facebook sans mot de passe
         if (!user.mot_de_passe && user.id_facebook) {
             return res.status(401).json({ message: 'Ce compte est li├⌐ ├á Facebook. Veuillez vous connecter avec Facebook.' });

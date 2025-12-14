@@ -27,7 +27,10 @@ router.put('/withdrawal-requests/:requestId', protect, authorize('admin', 'super
 
 // Nouvelle route pour les utilisateurs en ligne (déjà correcte mais confirmée)
 router.get('/online-users', protect, authorize('admin', 'superadmin'), adminController.getOnlineUsers);
-
+router.get('/client/:id', protect, authorize('admin', 'superadmin'), adminController.getClientDetails);
+router.post('/client/:id/recharge', protect, authorize('admin', 'superadmin'), adminController.adminRechargeClient);
+router.post('/client/:id/subscription', protect, authorize('admin', 'superadmin'), adminController.adminActivateSubscription);
+router.put('/client/:id/block', protect, authorize('admin', 'superadmin'), adminController.toggleBlockClient);
 /* ===== Routes SuperAdmin Uniquement ===== */
 // CORRECTION : Remplacement de 'authMiddleware' par 'protect'
 router.get('/admins', protect, isSuperAdminMiddleware, adminController.getAllAdmins);
@@ -57,5 +60,9 @@ router.post(
   toUploadResults,
   adminLandingController.createOrUpdateInfoAccueil
 );
-
+// --- GESTION UTILISATEURS (MOBILES) ---
+router.get('/users', protect, authorize('admin', 'superadmin'), adminController.getAllUsers);
+router.get('/users/:id', protect, authorize('admin', 'superadmin'), adminController.getUserDetailsAdmin);
+router.put('/users/:id', protect, authorize('admin', 'superadmin'), adminController.updateUserByAdmin);
+router.put('/users/:id/block', protect, authorize('admin', 'superadmin'), adminController.toggleBlockUser);
 module.exports = router;
