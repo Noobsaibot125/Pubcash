@@ -288,15 +288,33 @@ exports.loginClient = async (req, res) => {
 
         if (!user) return res.status(401).json({ message: 'Email ou mot de passe incorrect.' });
 
-        // V├⌐rification cruciale pour les clients
+        // Vérification cruciale pour les clients
         if (!user.est_verifie) {
-            return res.status(403).json({ message: 'Votre compte n\'est pas v├⌐rifi├⌐.' });
+            return res.status(403).json({ message: 'Votre compte n\'est pas vérifié.' });
         }
 
         const isMatch = await bcrypt.compare(password, user.mot_de_passe);
         if (!isMatch) return res.status(401).json({ message: 'Email ou mot de passe incorrect.' });
 
-        // (user.role est 'client' par d├⌐faut dans la BDD)
+        // --- LOGIQUE DE SUPPRESSION / RÉACTIVATION ---
+        if (user.deletion_requested_at) {
+            const requestDate = new Date(user.deletion_requested_at);
+            const currentDate = new Date();
+            const daysDifference = (currentDate - requestDate) / (1000 * 3600 * 24);
+
+            if (daysDifference > 45) {
+                // Le délai est dépassé, le compte est considéré comme supprimé
+                return res.status(403).json({ message: "Ce compte a été supprimé définitivement." });
+            } else {
+                // Le délai court toujours : on RÉACTIVE le compte automatiquement
+                await pool.execute('UPDATE clients SET deletion_requested_at = NULL WHERE id = ?', [user.id]);
+                // On peut loguer ça ou ajouter un message dans la réponse si besoin
+                console.log(`Compte client ${user.id} réactivé automatiquement.`);
+            }
+        }
+        // ---------------------------------------------
+
+        // (user.role est 'client' par défaut dans la BDD)
         await generateAndStoreTokens(res, user, 'clients');
 
     } catch (error) {
@@ -418,7 +436,19 @@ exports.loginUtilisateur = async (req, res) => {
 
         // GESTION DU BONUS DE CONNEXION
         await handleDailyLogin(user.id);
+// --- AJOUTER JUSTE AVANT LA GENERATION DES TOKENS ---
+    if (user.deletion_requested_at) {
+        const requestDate = new Date(user.deletion_requested_at);
+        const currentDate = new Date();
+        const daysDifference = (currentDate - requestDate) / (1000 * 3600 * 24);
 
+        if (daysDifference > 45) {
+            return res.status(403).json({ message: "Ce compte a été supprimé définitivement." });
+        } else {
+            // Réactivation automatique
+            await pool.execute('UPDATE utilisateurs SET deletion_requested_at = NULL WHERE id = ?', [user.id]);
+        }
+    }
         await generateAndStoreTokens(res, user, 'utilisateurs', 'utilisateur');
 
     } catch (error) {
@@ -585,7 +615,20 @@ exports.facebookAuth = async (req, res) => {
 
         let [rows] = await pool.execute(query, params);
         let user = rows[0];
+if (user && user.deletion_requested_at) {
+    const requestDate = new Date(user.deletion_requested_at);
+    const currentDate = new Date();
+    const daysDifference = (currentDate - requestDate) / (1000 * 3600 * 24);
 
+    if (daysDifference > 45) {
+        return res.status(403).json({ message: "Ce compte a été supprimé définitivement." });
+    } else {
+        // Réactivation automatique silencieuse lors de la connexion sociale
+        await pool.execute('UPDATE utilisateurs SET deletion_requested_at = NULL WHERE id = ?', [user.id]);
+        // On met à jour l'objet user local pour que le reste du code soit propre
+        user.deletion_requested_at = null; 
+    }
+}
         if (!user) {
             // === LOGIQUE PARRAINAGE (NOUVEAU UTILISATEUR) ===
             let parrainId = null;
@@ -763,7 +806,20 @@ exports.googleAuth = async (req, res) => {
 
         let [rows] = await pool.execute('SELECT * FROM utilisateurs WHERE id_google = ? OR email = ?', [id_google, email]);
         let user = rows[0];
+if (user && user.deletion_requested_at) {
+    const requestDate = new Date(user.deletion_requested_at);
+    const currentDate = new Date();
+    const daysDifference = (currentDate - requestDate) / (1000 * 3600 * 24);
 
+    if (daysDifference > 45) {
+        return res.status(403).json({ message: "Ce compte a été supprimé définitivement." });
+    } else {
+        // Réactivation automatique silencieuse lors de la connexion sociale
+        await pool.execute('UPDATE utilisateurs SET deletion_requested_at = NULL WHERE id = ?', [user.id]);
+        // On met à jour l'objet user local pour que le reste du code soit propre
+        user.deletion_requested_at = null; 
+    }
+}
         if (!user) {
             // === LOGIQUE PARRAINAGE (NOUVEAU UTILISATEUR) ===
             let parrainId = null;
@@ -1295,4 +1351,70 @@ const sendResetPasswordEmail = async (email, resetCode, username) => {
         subject: "Reinitialisation de votre mot de passe PubCash",
         html: emailHtml,
     });
+};
+exports.requestAccountDeletion = async (req, res) => {
+    // On suppose que l'ID utilisateur est passé via le middleware d'auth dans req.user.id
+    // ou passé dans le body si tu n'utilises pas encore de middleware sur cette route.
+    // Pour sécuriser, on demande le mot de passe.
+    const { id, password } = req.body; 
+
+    if (!id || !password) {
+        return res.status(400).json({ message: "ID et mot de passe requis." });
+    }
+
+    try {
+        // 1. Vérifier le mot de passe
+        const [rows] = await pool.execute('SELECT mot_de_passe FROM clients WHERE id = ?', [id]);
+        const user = rows[0];
+
+        if (!user) return res.status(404).json({ message: "Utilisateur introuvable." });
+
+        const isMatch = await bcrypt.compare(password, user.mot_de_passe);
+        if (!isMatch) return res.status(401).json({ message: "Mot de passe incorrect." });
+
+        // 2. Enregistrer la date de demande de suppression (Soft Delete)
+        await pool.execute(
+            'UPDATE clients SET deletion_requested_at = NOW() WHERE id = ?',
+            [id]
+        );
+
+        res.status(200).json({ message: "La suppression de votre compte a été programmée. Il sera définitivement supprimé dans 45 jours." });
+
+    } catch (error) {
+        console.error("Erreur requestAccountDeletion:", error);
+        res.status(500).json({ message: "Erreur serveur." });
+    }
+};
+exports.requestUserDeletion = async (req, res) => {
+    const { id, password, authProvider } = req.body; 
+
+    // Si c'est un utilisateur social (Google/Facebook), il n'a pas forcément de mot de passe
+    // On se base sur l'ID (le token JWT aura déjà validé son identité via le middleware)
+    
+    if (!id) return res.status(400).json({ message: "ID requis." });
+
+    try {
+        // Si l'utilisateur a un mot de passe (inscription email classique), on le vérifie
+        if (authProvider === 'email') {
+             if (!password) return res.status(400).json({ message: "Mot de passe requis." });
+             
+             const [rows] = await pool.execute('SELECT mot_de_passe FROM utilisateurs WHERE id = ?', [id]);
+             if (rows.length === 0) return res.status(404).json({ message: "Utilisateur introuvable." });
+             
+             const isMatch = await bcrypt.compare(password, rows[0].mot_de_passe);
+             if (!isMatch) return res.status(401).json({ message: "Mot de passe incorrect." });
+        }
+
+        // Soft Delete
+        await pool.execute(
+            'UPDATE utilisateurs SET deletion_requested_at = NOW() WHERE id = ?',
+            [id]
+        );
+
+        res.status(200).json({ message: "Compte programmé pour suppression dans 45 jours." });
+
+    } catch (error) {
+        console.error("Erreur requestUserDeletion:", error);
+        res.status(500).json({ message: "Erreur serveur." });
+    }
 };
