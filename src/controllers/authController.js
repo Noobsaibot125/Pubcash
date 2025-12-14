@@ -627,6 +627,18 @@ exports.facebookAuth = async (req, res) => {
 
         let [rows] = await pool.execute(query, params);
         let user = rows[0];
+        if (user) {
+            if (user.est_bloque == 1) {
+                return res.status(403).json({ 
+                    message: "Votre compte a été suspendu par l'administrateur. Contactez le support." 
+                });
+            }
+
+            // Vérification est_actif (si tu l'utilises)
+            if (user.est_actif == 0) {
+                 return res.status(403).json({ message: "Votre compte a été désactivé." });
+            }
+        }
 if (user && user.deletion_requested_at) {
     const requestDate = new Date(user.deletion_requested_at);
     const currentDate = new Date();
@@ -818,6 +830,18 @@ exports.googleAuth = async (req, res) => {
 
         let [rows] = await pool.execute('SELECT * FROM utilisateurs WHERE id_google = ? OR email = ?', [id_google, email]);
         let user = rows[0];
+        // --- CORRECTION : VÉRIFICATION DU BLOCAGE ---
+        if (user) {
+            if (user.est_bloque == 1) {
+                return res.status(403).json({ 
+                    message: "Votre compte a été suspendu par l'administrateur. Contactez le support." 
+                });
+            }
+             // Vérification est_actif
+            if (user.est_actif == 0) {
+                 return res.status(403).json({ message: "Votre compte a été désactivé." });
+            }
+        }
 if (user && user.deletion_requested_at) {
     const requestDate = new Date(user.deletion_requested_at);
     const currentDate = new Date();
