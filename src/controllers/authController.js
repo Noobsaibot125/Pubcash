@@ -293,12 +293,14 @@ exports.loginClient = async (req, res) => {
 
         // --- CORRECTION RENFORCÉE ---
         // On vérifie si c'est 1 (nombre) ou true (booléen)
-        if (user.est_bloque == 1 || user.est_bloque === true) {
-            console.log(`Connexion REFUSÉE pour ${user.email} (Compte bloqué)`);
-            return res.status(403).json({ 
-                message: "Votre compte a été bloqué par l'administrateur. Veuillez contacter le support." 
-            });
-        }
+      if (user.est_bloque == 1 || user.est_bloque === true) {
+    console.log(`Connexion REFUSÉE pour ${user.email} (Compte bloqué)`);
+    // AJOUT : error_code
+    return res.status(403).json({ 
+        message: "Votre compte a été bloqué par l'administrateur.",
+        error_code: "ACCOUNT_BLOCKED" 
+    });
+}
         // -----------------------------
 
         // Vérification cruciale pour les clients
@@ -413,8 +415,10 @@ exports.loginUtilisateur = async (req, res) => {
         if (!user) return res.status(401).json({ message: 'Identifiant ou mot de passe incorrect.' });
 // --- AJOUT VÉRIFICATION BLOCAGE ---
 if (user.est_bloque == 1) {
+    // AJOUT : error_code
     return res.status(403).json({ 
-        message: "Votre compte a été suspendu par l'administrateur. Contactez le support." 
+        message: "Votre compte a été suspendu par l'administrateur.",
+        error_code: "ACCOUNT_BLOCKED"
     });
 }
         // G├⌐rer les comptes Facebook sans mot de passe
@@ -629,10 +633,12 @@ exports.facebookAuth = async (req, res) => {
         let user = rows[0];
         if (user) {
             if (user.est_bloque == 1) {
-                return res.status(403).json({ 
-                    message: "Votre compte a été suspendu par l'administrateur. Contactez le support." 
-                });
-            }
+    // AJOUT : error_code
+    return res.status(403).json({ 
+        message: "Votre compte a été suspendu par l'administrateur.",
+        error_code: "ACCOUNT_BLOCKED"
+    });
+}
 
             // Vérification est_actif (si tu l'utilises)
             if (user.est_actif == 0) {
@@ -832,11 +838,13 @@ exports.googleAuth = async (req, res) => {
         let user = rows[0];
         // --- CORRECTION : VÉRIFICATION DU BLOCAGE ---
         if (user) {
-            if (user.est_bloque == 1) {
-                return res.status(403).json({ 
-                    message: "Votre compte a été suspendu par l'administrateur. Contactez le support." 
-                });
-            }
+          if (user.est_bloque == 1) {
+    // AJOUT : error_code
+    return res.status(403).json({ 
+        message: "Votre compte a été suspendu par l'administrateur.",
+        error_code: "ACCOUNT_BLOCKED"
+    });
+}
              // Vérification est_actif
             if (user.est_actif == 0) {
                  return res.status(403).json({ message: "Votre compte a été désactivé." });
