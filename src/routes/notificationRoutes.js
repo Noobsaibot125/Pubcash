@@ -13,7 +13,7 @@ router.get('/non-lues/count', notificationController.getNombreNonLues);
 router.patch('/:id/lire', notificationController.marquerCommeLue);
 router.patch('/lire-toutes', notificationController.marquerToutesCommeLues);
 router.delete('/:id', notificationController.supprimerNotification);
-
+router.delete('/toutes', notificationController.supprimerToutesNotifications);
 // C'est la route cruciale
 router.post('/token', notificationController.sauvegarderToken);
 

@@ -121,3 +121,13 @@ exports.deleteOldNotifications = async () => {
          WHERE date_creation < DATE_SUB(NOW(), INTERVAL 30 DAY)`
     );
 };
+exports.deleteAllNotifications = async (utilisateurId) => {
+    // Adapter 'db' selon ta configuration (pool, db, connection...)
+    // Adapter le nom de la table 'notifications' si c'est différent chez toi
+    const query = 'DELETE FROM notifications WHERE utilisateur_id = ?';
+    
+    // Si tu utilises mysql2 / promise
+    await db.query(query, [utilisateurId]);
+    
+    // Si tu utilises une autre méthode, assure-toi d'exécuter cette requête SQL
+};

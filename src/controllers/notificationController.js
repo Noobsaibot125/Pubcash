@@ -182,3 +182,26 @@ exports.testNotification = async (req, res) => {
         });
     }
 };
+
+/**
+ * Supprimer TOUTES les notifications de l'utilisateur
+ */
+exports.supprimerToutesNotifications = async (req, res) => {
+    try {
+        const utilisateurId = req.user.id;
+
+        // Appel au modèle (que nous allons créer juste après)
+        await notificationModel.deleteAllNotifications(utilisateurId);
+
+        res.json({
+            success: true,
+            message: 'Toutes les notifications ont été supprimées',
+        });
+    } catch (error) {
+        console.error('Erreur suppression totale notifications:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Erreur lors de la suppression totale',
+        });
+    }
+};
