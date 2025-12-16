@@ -12,8 +12,14 @@ router.get('/', notificationController.getNotifications);
 router.get('/non-lues/count', notificationController.getNombreNonLues);
 router.patch('/:id/lire', notificationController.marquerCommeLue);
 router.patch('/lire-toutes', notificationController.marquerToutesCommeLues);
-router.delete('/:id', notificationController.supprimerNotification);
+
+// 👇👇👇 MODIFICATION ICI : '/toutes' DOIT ÊTRE EN PREMIER 👇👇👇
 router.delete('/toutes', notificationController.supprimerToutesNotifications);
+
+// 👇👇👇 ENSUITE SEULEMENT, LA ROUTE AVEC ID 👇👇👇
+router.delete('/:id', notificationController.supprimerNotification);
+
+
 // C'est la route cruciale
 router.post('/token', notificationController.sauvegarderToken);
 
