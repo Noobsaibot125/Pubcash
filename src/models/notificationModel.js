@@ -122,12 +122,11 @@ exports.deleteOldNotifications = async () => {
     );
 };
 exports.deleteAllNotifications = async (utilisateurId) => {
-    // Adapter 'db' selon ta configuration (pool, db, connection...)
-    // Adapter le nom de la table 'notifications' si c'est différent chez toi
-    const query = 'DELETE FROM notifications WHERE utilisateur_id = ?';
+    // ⚠️ CORRECTION 1 : On utilise 'pool' (importé en haut), pas 'db' qui n'existe pas.
+    // ⚠️ CORRECTION 2 : On utilise 'id_utilisateur' pour être cohérent avec tes autres fonctions (getUserNotifications, etc.).
     
-    // Si tu utilises mysql2 / promise
-    await db.query(query, [utilisateurId]);
-    
-    // Si tu utilises une autre méthode, assure-toi d'exécuter cette requête SQL
+    await pool.execute(
+        'DELETE FROM notifications WHERE id_utilisateur = ?',
+        [utilisateurId]
+    );
 };
