@@ -4,7 +4,15 @@ const AdminModel = require('../models/adminModel');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
+const axios = require('axios'); // <--- AJOUTER CECI
+const notificationService = require('../services/notificationService');
+const BASE_URL = process.env.NODE_ENV === 'production' 
+  ? process.env.PRODUCTION_URL 
+  : process.env.DEVELOPMENT_URL || `http://${process.env.HOST || 'localhost'}:${process.env.PORT || 5000}`;
 
+const CINETPAY_APIKEY = process.env.CINETPAY_APIKEY || ''; 
+const CINETPAY_SITE_ID = process.env.CINETPAY_SITE_ID || '859043'; 
+const CINETPAY_SECRET_KEY = process.env.CINETPAY_SECRET_KEY || '521006956621e4e7a6a3d16.70681548';
 exports.getClients = async (req, res) => {
   try {
     // sélectionne les champs que ton front attend
@@ -98,38 +106,36 @@ exports.getDashboardData = async (req, res) => {
     const promises = [
       pool.execute('SELECT id, nom, prenom, email, commune, solde_recharge, est_verifie FROM clients ORDER BY date_inscription DESC'),
       pool.execute('SELECT COUNT(*) as total FROM utilisateurs'),
-      pool.execute(`
-            SELECT c.commune, COUNT(p.id) as activity_count 
-            FROM promotions p
-            JOIN clients c ON p.id_client = c.id
-            GROUP BY c.commune 
-            ORDER BY activity_count DESC
-        `)
+      pool.execute(`SELECT c.commune, COUNT(p.id) as activity_count FROM promotions p JOIN clients c ON p.id_client = c.id GROUP BY c.commune ORDER BY activity_count DESC`)
     ];
 
     if (userRole === 'superadmin') {
+      // Card 1 : REVENUS (ID = 1)
       promises.push(pool.execute('SELECT solde FROM portefeuille_admin WHERE id = 1'));
+      // Card 2 : DISTRIBUTION (ID = 2) - C'est ici qu'on verra les 5300 FCFA
+      promises.push(pool.execute('SELECT solde FROM portefeuille_admin WHERE id = 2'));
     }
 
     const results = await Promise.all(promises);
-
-    const clientsRes = results[0];
-    const utilisateursRes = results[1];
-    const activityRes = results[2];
-    let walletRes = null;
+    
+    let walletRevenue = 0;
+    let walletDistribution = 0;
 
     if (userRole === 'superadmin') {
-      walletRes = results[3];
+      // Gestion sécurisée si les portefeuilles n'existent pas encore
+      walletRevenue = (results[3][0] && results[3][0][0]) ? results[3][0][0].solde : 0;
+      walletDistribution = (results[4][0] && results[4][0][0]) ? results[4][0][0].solde : 0;
     }
 
     const dashboardData = {
-      wallet: walletRes ? walletRes[0][0] : null,
-      clients: clientsRes[0],
+      wallet: { solde: walletRevenue }, // Format attendu par le front pour Card 1
+      totalRecharged: walletDistribution, // Pour Card 2
+      clients: results[0][0],
       stats: {
-        totalClients: clientsRes[0].length,
-        totalUtilisateurs: utilisateursRes[0][0].total,
+        totalClients: results[0][0].length,
+        totalUtilisateurs: results[1][0][0].total,
       },
-      activityByCommune: activityRes[0]
+      activityByCommune: results[2][0]
     };
 
     res.status(200).json(dashboardData);
@@ -138,7 +144,6 @@ exports.getDashboardData = async (req, res) => {
     res.status(500).json({ message: 'Erreur serveur' });
   }
 };
-
 // --- NOUVELLE FONCTION POUR SUPPRIMER UN CLIENT ---
 exports.deleteClient = async (req, res) => {
   const { clientId } = req.params;
@@ -455,34 +460,41 @@ exports.adminRechargeClient = async (req, res) => {
     const { id } = req.params;
     const { amount } = req.body;
 
-    if (!amount || isNaN(amount) || amount <= 0) {
-        return res.status(400).json({ message: "Montant invalide" });
-    }
+    if (!amount || isNaN(amount) || amount <= 0) return res.status(400).json({ message: "Montant invalide" });
 
     const connection = await pool.getConnection();
     try {
         await connection.beginTransaction();
 
-        // Créditer le client
-        await connection.execute(
-            'UPDATE clients SET solde_recharge = solde_recharge + ? WHERE id = ?',
-            [amount, id]
-        );
+        // 1. Vérifier solde distribution (ID 2)
+        const [distWallet] = await connection.execute('SELECT solde FROM portefeuille_admin WHERE id = 2 FOR UPDATE');
+        
+        // Si le portefeuille n'existe pas ou est vide
+        const soldeDispo = (distWallet.length > 0) ? parseFloat(distWallet[0].solde) : 0;
 
-        // Enregistrer une trace dans l'historique admin (optionnel mais recommandé)
-        // Tu peux créer une table 'admin_logs' plus tard si besoin.
+        if (soldeDispo < amount) {
+            await connection.rollback();
+            return res.status(400).json({ 
+                message: `Fonds de distribution insuffisants (${soldeDispo} FCFA). Veuillez recharger le compte Admin.` 
+            });
+        }
+
+        // 2. Déduire de ID 2
+        await connection.execute('UPDATE portefeuille_admin SET solde = solde - ? WHERE id = 2', [amount]);
+
+        // 3. Créditer Client
+        await connection.execute('UPDATE clients SET solde_recharge = solde_recharge + ? WHERE id = ?', [amount, id]);
 
         await connection.commit();
-        res.status(200).json({ message: `Compte rechargé de ${amount} FCFA avec succès.` });
+        res.status(200).json({ message: `Client rechargé de ${amount} FCFA avec succès.` });
     } catch (error) {
         await connection.rollback();
-        console.error("Erreur adminRechargeClient:", error);
-        res.status(500).json({ message: 'Erreur serveur' });
+        console.error("Erreur recharge client:", error);
+        res.status(500).json({ message: 'Erreur serveur.' });
     } finally {
         connection.release();
     }
 };
-
 // 3. Activer un abonnement Premium manuellement
 exports.adminActivateSubscription = async (req, res) => {
     const { id } = req.params;
@@ -614,23 +626,89 @@ exports.getUserDetailsAdmin = async (req, res) => {
 
 // 3. Modifier un utilisateur (Admin)
 exports.updateUserByAdmin = async (req, res) => {
-    const { id } = req.params;
+    const { id } = req.params; // ID de l'utilisateur mobile
     const { nom, prenom, email, contact, commune_choisie, points, solde } = req.body;
 
+    const connection = await pool.getConnection();
     try {
-        await pool.execute(
-            `UPDATE utilisateurs 
-             SET nom = ?, prenom = ?, email = ?, contact = ?, commune_choisie = ?, points = ?, remuneration_utilisateur = ?
-             WHERE id = ?`,
+        await connection.beginTransaction();
+
+        // A. Récupérer l'utilisateur actuel
+        const [currentUser] = await connection.execute('SELECT remuneration_utilisateur, points FROM utilisateurs WHERE id = ? FOR UPDATE', [id]);
+        if (currentUser.length === 0) { await connection.rollback(); return res.status(404).json({message: "User introuvable"}); }
+        
+        const oldBalance = parseFloat(currentUser[0].remuneration_utilisateur || 0);
+        const oldPoints = parseInt(currentUser[0].points || 0);
+        
+        const newBalance = parseFloat(solde);
+        const newPoints = parseInt(points);
+        
+        const differenceSolde = newBalance - oldBalance;
+        const differencePoints = newPoints - oldPoints;
+
+        // B. Si on AUGMENTE le solde, on déduit du compte Admin (ID 2)
+        if (differenceSolde > 0) {
+            const [distWallet] = await connection.execute('SELECT solde FROM portefeuille_admin WHERE id = 2 FOR UPDATE');
+            const soldeDispo = (distWallet.length > 0) ? parseFloat(distWallet[0].solde) : 0;
+
+            if (soldeDispo < differenceSolde) {
+                await connection.rollback();
+                // Message spécifique pour le frontend
+                return res.status(400).json({ 
+                    message: `Fonds insuffisants` // Mot clé pour le frontend
+                });
+            }
+
+            await connection.execute('UPDATE portefeuille_admin SET solde = solde - ? WHERE id = 2', [differenceSolde]);
+        }
+
+        // C. Update User
+        await connection.execute(
+            `UPDATE utilisateurs SET nom=?, prenom=?, email=?, contact=?, commune_choisie=?, points=?, remuneration_utilisateur=? WHERE id=?`,
             [nom, prenom, email, contact, commune_choisie, points, solde, id]
         );
-        res.status(200).json({ message: "Informations utilisateur mises à jour." });
+
+        await connection.commit();
+
+        // --- D. ENVOI DES NOTIFICATIONS MOBILES ---
+        // On fait ça après le commit pour ne pas bloquer si la notif échoue
+        try {
+            // Notification pour l'ARGENT
+            if (differenceSolde > 0) {
+                await notificationService.envoyerNotification(
+                    id,
+                    'rechargement',
+                    'Compte Rechargé 💰',
+                    `Félicitations ! L'administrateur a rechargé votre compte de ${differenceSolde.toLocaleString('fr-FR')} FCFA.`,
+                    { screen: 'wallet', new_balance: newBalance.toString() }
+                );
+            }
+
+            // Notification pour les POINTS
+            if (differencePoints > 0) {
+                await notificationService.envoyerNotification(
+                    id,
+                    'points_gagnes',
+                    'Points Reçus 🎁',
+                    `Vous avez reçu ${differencePoints} points bonus de la part de l'administrateur !`,
+                    { screen: 'profile', new_points: newPoints.toString() }
+                );
+            }
+        } catch (notifError) {
+            console.error("Erreur envoi notification (updateUserByAdmin):", notifError.message);
+            // On ne fail pas la requête HTTP car la DB est déjà à jour
+        }
+
+        res.status(200).json({ message: "Utilisateur mis à jour avec succès." });
+
     } catch (error) {
-        console.error("Erreur updateUserByAdmin:", error);
+        await connection.rollback();
+        console.error("Erreur update user:", error);
         res.status(500).json({ message: 'Erreur serveur' });
+    } finally {
+        connection.release();
     }
 };
-
 // 4. Bloquer / Débloquer un utilisateur
 exports.toggleBlockUser = async (req, res) => {
     const { id } = req.params;
@@ -645,5 +723,148 @@ exports.toggleBlockUser = async (req, res) => {
     } catch (error) {
         console.error("Erreur toggleBlockUser:", error);
         res.status(500).json({ message: 'Erreur serveur' });
+    }
+};
+exports.rechargeAdminAccount = async (req, res) => {
+    const adminId = req.user.id;
+    const { amount, phone } = req.body;
+
+    // Vérification SuperAdmin (Sécurité supplémentaire)
+    if (req.user.role !== 'superadmin') {
+        return res.status(403).json({ message: "Accès refusé. Réservé aux SuperAdmins." });
+    }
+
+    if (!amount || isNaN(amount) || Number(amount) < 100) {
+        return res.status(400).json({ message: 'Le montant minimum est de 100 FCFA.' });
+    }
+
+    if (!phone) {
+        return res.status(400).json({ message: 'Le numéro de téléphone est requis pour le paiement.' });
+    }
+
+    try {
+        // Formatage du téléphone (Ta logique existante)
+        let formattedPhone = phone.trim().replace(/\s+/g, '').replace(/[^\d+]/g, '');
+        
+        // Validation basique
+        const isValidPhone = (p) => {
+             if (p.startsWith('+225') && p.length === 13) return true;
+             if (p.startsWith('225') && p.length === 12) return true;
+             if (/^\d{10}$/.test(p)) return true;
+             return false;
+        };
+
+        if (!isValidPhone(formattedPhone)) {
+            return res.status(400).json({ message: 'Numéro invalide.' });
+        }
+
+        // Normalisation CinetPay (+225...)
+        if (formattedPhone.startsWith('225')) formattedPhone = '+' + formattedPhone;
+        else if (/^\d{10}$/.test(formattedPhone)) formattedPhone = '+225' + formattedPhone;
+
+        const transactionId = `ADM_RECH_${adminId}_${Date.now()}`;
+
+        // Insertion dans la nouvelle table 'solde_recharge'
+        await pool.execute(
+            'INSERT INTO solde_recharge (transaction_id, admin_id, montant, telephone_utilise, statut) VALUES (?, ?, ?, ?, ?)',
+            [transactionId, adminId, Number(amount), formattedPhone, 'PENDING']
+        );
+
+        // Données pour CinetPay
+        const checkoutData = {
+            transaction_id: transactionId,
+            amount: Number(amount),
+            currency: 'XOF',
+            channels: 'ALL',
+            description: `Recharge Admin PubCash`,
+            customer_name: "Administrateur",
+            customer_surname: "SuperAdmin", // Valeurs par défaut car pas de nom/prenom dans la table admin
+            customer_email: req.user.email || "admin@pubcash.com",
+            customer_phone_number: formattedPhone,
+            customer_city: "Abidjan",
+            customer_country: "CI",
+            customer_state: "CI",
+            customer_zip_code: "0000"
+        };
+
+        res.status(200).json({
+            message: 'Paiement initialisé',
+            cinetpay_config: {
+                apikey: CINETPAY_APIKEY,
+                site_id: CINETPAY_SITE_ID,
+                notify_url: `${BASE_URL}/webhook/cinetpay-admin`, // IMPORTANT: Tu devras gérer ce webhook pour créditer 'portefeuille_admin'
+                mode: 'PRODUCTION'
+            },
+            checkout_data: checkoutData
+        });
+
+    } catch (error) {
+        console.error('❌ Erreur rechargeAdminAccount:', error);
+        res.status(500).json({ message: "Erreur serveur", error: error.message });
+    }
+};
+
+// 2. Récupérer l'historique des rechargements ADMIN
+exports.getAdminRechargeHistory = async (req, res) => {
+    try {
+        const [rows] = await pool.execute(`
+            SELECT sr.*, a.nom_utilisateur 
+            FROM solde_recharge sr
+            JOIN administrateurs a ON sr.admin_id = a.id
+            WHERE sr.statut = 'ACCEPTED'  -- FILTRE AJOUTÉ ICI
+            ORDER BY sr.date_recharge DESC
+            LIMIT 50
+        `);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error("Erreur getAdminRechargeHistory:", error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
+};
+exports.verifyAdminRecharge = async (req, res) => {
+    const { transaction_id } = req.body;
+    const adminId = req.user.id;
+
+    if (!transaction_id) return res.status(400).json({ message: 'Transaction ID requis.' });
+
+    try {
+        const [txRows] = await pool.execute('SELECT * FROM solde_recharge WHERE transaction_id = ? AND admin_id = ?', [transaction_id, adminId]);
+        if (txRows.length === 0) return res.status(404).json({ message: 'Transaction introuvable.' });
+        const tx = txRows[0];
+        
+        if (tx.statut === 'ACCEPTED') return res.status(200).json({ message: 'Déjà validée.' });
+
+        // Vérification API CinetPay
+        const payload = { apikey: CINETPAY_APIKEY, site_id: CINETPAY_SITE_ID, transaction_id: transaction_id };
+        const checkResp = await axios.post('https://api-checkout.cinetpay.com/v2/payment/check', payload, { headers: { 'Content-Type': 'application/json' }});
+        
+        if (checkResp.data?.data?.status === 'ACCEPTED') {
+            const connection = await pool.getConnection();
+            try {
+                await connection.beginTransaction();
+
+                // MAJ Historique
+                await connection.execute('UPDATE solde_recharge SET statut = ?, date_recharge = NOW() WHERE id = ?', ['ACCEPTED', tx.id]);
+
+                // Création du portefeuille ID=2 si inexistant
+                await connection.execute(`INSERT INTO portefeuille_admin (id, solde) SELECT 2, 0 WHERE NOT EXISTS (SELECT 1 FROM portefeuille_admin WHERE id = 2)`);
+                
+                // CRÉDITER ID=2
+                await connection.execute('UPDATE portefeuille_admin SET solde = solde + ? WHERE id = 2', [Number(tx.montant)]);
+
+                await connection.commit();
+                return res.status(200).json({ message: 'Rechargement validé.' });
+            } catch (err) {
+                await connection.rollback();
+                throw err;
+            } finally {
+                connection.release();
+            }
+        } else {
+            return res.status(400).json({ message: "Paiement non confirmé." });
+        }
+    } catch (error) {
+        console.error("Erreur verify:", error);
+        return res.status(500).json({ message: "Erreur serveur." });
     }
 };

@@ -41,6 +41,11 @@ router.post('/villes', protect, isSuperAdminMiddleware, adminController.createVi
 router.get('/villes', protect, isSuperAdminMiddleware, adminController.getAllVilles);
 router.post('/communes', protect, isSuperAdminMiddleware, adminController.createCommune);
 router.get('/communes', protect, isSuperAdminMiddleware, adminController.getAllCommunes); // Pour lister les communes créées
+// RECHARGEMENT COMPTE ADMIN
+router.post('/recharge', protect, isSuperAdminMiddleware, adminController.rechargeAdminAccount);
+// AJOUTER CETTE LIGNE :
+router.post('/recharge/verify', protect, isSuperAdminMiddleware, adminController.verifyAdminRecharge);
+router.get('/recharge-history', protect, isSuperAdminMiddleware, adminController.getAdminRechargeHistory);
 /* ===== ROUTES INFO ACCUEIL (landing) ===== */
 // GET public (pas besoin de middleware)
 router.get('/info-accueil', adminLandingController.getInfoAccueil);
