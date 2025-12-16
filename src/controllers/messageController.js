@@ -100,7 +100,37 @@ exports.sendMessage = async (req, res) => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [senderId, senderType, destinataireId, destinataireType, contenu || '', typeContenu, urlMedia, nomFichier, tailleFichier]
         );
+// --- AJOUT POUR SOCKET.IO ---
+try {
+    // Récupérer l'instance IO depuis l'objet app (express)
+    const io = req.app.get('io'); 
 
+    // Préparer le message pour le socket
+    // (J'ai ajouté la date pour que ce soit complet)
+    const [msgRow] = await connection.execute('SELECT date_envoi FROM messages WHERE id = ?', [result.insertId]);
+    
+    const socketMessage = {
+        id: result.insertId,
+        id_expediteur: senderId,
+        type_expediteur: senderType,
+        id_destinataire: parseInt(destinataireId),
+        type_destinataire: destinataireType,
+        contenu: contenu || '',
+        type_contenu: typeContenu,
+        url_media: urlMedia,
+        date_envoi: msgRow[0].date_envoi,
+        lu: 0
+    };
+
+    // Envoyer à la room du destinataire
+    const roomDestinataire = `${destinataireType}_${destinataireId}`;
+    io.to(roomDestinataire).emit('receive_message', socketMessage);
+    console.log(`Socket message envoyé à : ${roomDestinataire}`);
+
+} catch (socketError) {
+    console.error("Erreur d'envoi Socket.io:", socketError);
+    // On ne bloque pas la réponse HTTP si le socket échoue
+}
         // 4. Notification Push
         if (destinataireType === 'utilisateur') {
             // === CORRECTION MAJEURE ICI ===

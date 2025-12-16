@@ -213,10 +213,10 @@ app.use('/api', publicRoutes);
 // --- GESTION DES CONNEXIONS WEBSOCKET ---
 // ======================================================
 
-// Variable en mÃ©moire pour stocker les utilisateurs connectÃ©s
+// Variable en mémoire pour stocker les utilisateurs connectés
 let onlineUsers = {};
 
-// Fonction pour rÃ©cupÃ©rer les utilisateurs en ligne depuis la base de donnÃ©es
+// Fonction pour récupérer les utilisateurs en ligne depuis la base de données
 async function getOnlineUsers() {
   try {
     const [rows] = await pool.execute(
@@ -236,7 +236,7 @@ async function getOnlineUsers() {
       est_en_ligne: !!r.est_en_ligne
     }));
   } catch (error) {
-    console.error("Erreur lors de la rÃ©cupÃ©ration des utilisateurs en ligne:", error);
+    console.error("Erreur lors de la récupération des utilisateurs en ligne:", error);
     return [];
   }
 }
@@ -244,7 +244,18 @@ async function getOnlineUsers() {
 io.on('connection', (socket) => {
   console.log('Nouvelle connexion WebSocket:', socket.id);
 
-  // --- Logique pour les notifications ciblÃ©es (ex: retraits) ---
+  // --- 1. GESTION DU CHAT (NOUVEAU) ---
+  // Permet à un utilisateur (client ou utilisateur) de s'enregistrer pour recevoir des messages
+  socket.on('register_chat', (data) => {
+      // data doit contenir { userId: 1, userType: 'client' } ou 'utilisateur'
+      if (!data || !data.userId || !data.userType) return;
+      
+      const roomName = `${data.userType}_${data.userId}`;
+      socket.join(roomName);
+      console.log(`💬 Chat: Client ${socket.id} a rejoint la room ${roomName}`);
+  });
+  
+  // --- 2. GESTION DES NOTIFICATIONS CIBLÉES (RETRAITS) ---
   socket.on('join-user-room', (userId) => {
     socket.join(`user-${userId}`);
     console.log(`Client ${socket.id} a rejoint la room user-${userId}`);
@@ -252,58 +263,58 @@ io.on('connection', (socket) => {
 
   socket.on('leave-user-room', (userId) => {
     socket.leave(`user-${userId}`);
-    console.log(`Client ${socket.id} a quittÃ© la room user-${userId}`);
+    console.log(`Client ${socket.id} a quitté la room user-${userId}`);
   });
 
-  // --- Logique pour le suivi des utilisateurs en ligne ---
+  // --- 3. SUIVI UTILISATEURS EN LIGNE (EXISTANT) ---
   socket.on('user_online', async (userId) => {
-    // VÃ©rifier si userId est valide
+    // Vérifier si userId est valide
     if (!userId) return;
 
-    console.log(`Ã‰vÃ©nement 'user_online' reÃ§u pour l'utilisateur ${userId}`);
+    console.log(`Événement 'user_online' reçu pour l'utilisateur ${userId}`);
     onlineUsers[userId] = socket.id;
 
-    // Mettre Ã  jour la base de donnÃ©es pour marquer l'utilisateur comme "en ligne"
+    // Mettre à jour la base de données pour marquer l'utilisateur comme "en ligne"
     try {
       await pool.execute(
         'UPDATE utilisateurs SET est_en_ligne = ?, derniere_connexion = NOW() WHERE id = ?',
         [true, userId]
       );
 
-      // Envoyer la nouvelle liste d'utilisateurs connectÃ©s Ã  tous les clients (admins)
+      // Envoyer la nouvelle liste d'utilisateurs connectés à tous les clients (admins)
       const users = await getOnlineUsers();
       io.emit('update_online_users', users);
 
     } catch (dbError) {
-      console.error("Erreur BDD lors de la mise Ã  jour du statut 'en ligne':", dbError);
+      console.error("Erreur BDD lors de la mise à jour du statut 'en ligne':", dbError);
     }
   });
 
-  // --- Logique de dÃ©connexion CORRIGÃ‰E ---
+  // --- 4. DÉCONNEXION ---
   socket.on('disconnect', async (reason) => {
-    console.log('Client dÃ©connectÃ©:', socket.id, 'Raison:', reason);
+    console.log('Client déconnecté:', socket.id, 'Raison:', reason);
 
-    // Trouver quel utilisateur s'est dÃ©connectÃ©
+    // Trouver quel utilisateur s'est déconnecté
     const userId = Object.keys(onlineUsers).find(key => onlineUsers[key] === socket.id);
 
     if (userId) {
-      console.log(`Utilisateur ${userId} dÃ©connectÃ©`);
+      console.log(`Utilisateur ${userId} déconnecté`);
       delete onlineUsers[userId];
 
-      // Mettre Ã  jour la base de donnÃ©es pour marquer l'utilisateur comme "hors ligne"
+      // Mettre à jour la base de données pour marquer l'utilisateur comme "hors ligne"
       try {
         await pool.execute(
           'UPDATE utilisateurs SET est_en_ligne = ? WHERE id = ?',
           [false, userId]
         );
 
-        // Envoyer la liste mise Ã  jour aux admins
+        // Envoyer la liste mise à jour aux admins
         const users = await getOnlineUsers();
         io.emit('update_online_users', users);
 
         console.log(`Utilisateur ${userId} est maintenant hors ligne.`);
       } catch (dbError) {
-        console.error("Erreur BDD lors de la mise Ã  jour du statut 'hors ligne':", dbError);
+        console.error("Erreur BDD lors de la mise à jour du statut 'hors ligne':", dbError);
       }
     }
   });
