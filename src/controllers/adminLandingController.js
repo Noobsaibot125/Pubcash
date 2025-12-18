@@ -45,6 +45,11 @@ exports.createOrUpdateInfoAccueil = async (req, res) => {
     const advertisersImagePath = req.uploadResults?.advertisersImagePath ?? (req.files?.advertisers_image?.[0] ? `/uploads/landing/${req.files.advertisers_image[0].filename}` : null);
     const usersImagePath = req.uploadResults?.usersImagePath ?? (req.files?.users_image?.[0] ? `/uploads/landing/${req.files.users_image[0].filename}` : null);
 
+    // Nouveaux chemins pour le tutoriel mobile
+    const tutorial1Path = req.files?.tutorial_1?.[0] ? `/uploads/landing/${req.files.tutorial_1[0].filename}` : null;
+    const tutorial2Path = req.files?.tutorial_2?.[0] ? `/uploads/landing/${req.files.tutorial_2[0].filename}` : null;
+    const tutorial3Path = req.files?.tutorial_3?.[0] ? `/uploads/landing/${req.files.tutorial_3[0].filename}` : null;
+
     console.log('Données reçues pour info_accueil:', { title, subtitle, logoPath, imagePath, videoPath });
 
     // Vérifier si entrée existe
@@ -77,6 +82,10 @@ exports.createOrUpdateInfoAccueil = async (req, res) => {
       if (advertisersImagePath !== undefined && advertisersImagePath !== null) { updateFields.push('advertisers_image_path = ?'); updateValues.push(advertisersImagePath); }
       if (usersImagePath !== undefined && usersImagePath !== null) { updateFields.push('users_image_path = ?'); updateValues.push(usersImagePath); }
 
+      if (tutorial1Path) { updateFields.push('tutorial_image_1 = ?'); updateValues.push(tutorial1Path); }
+      if (tutorial2Path) { updateFields.push('tutorial_image_2 = ?'); updateValues.push(tutorial2Path); }
+      if (tutorial3Path) { updateFields.push('tutorial_image_3 = ?'); updateValues.push(tutorial3Path); }
+
       if (updateFields.length === 0) {
         return res.status(200).json({ message: 'Aucun champ à mettre à jour' });
       }
@@ -90,14 +99,16 @@ exports.createOrUpdateInfoAccueil = async (req, res) => {
           ecosystem_title, ecosystem_description,
           advertisers_title, advertisers_description, advertisers_features, advertisers_image_path,
           users_title, users_description, users_features, users_image_path,
-          testimonial_text, testimonial_author
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          testimonial_text, testimonial_author,
+          tutorial_image_1, tutorial_image_2, tutorial_image_3
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           title || '', subtitle || '', logoPath, imagePath, videoPath, null,
           ecosystem_title, ecosystem_description,
           advertisers_title, advertisers_description, advertisers_features, advertisersImagePath,
           users_title, users_description, users_features, usersImagePath,
-          testimonial_text, testimonial_author
+          testimonial_text, testimonial_author,
+          tutorial1Path, tutorial2Path, tutorial3Path
         ]
       );
     }

@@ -60,7 +60,10 @@ router.post(
     { name: 'image', maxCount: 1 },
     { name: 'video', maxCount: 1 },
     { name: 'advertisers_image', maxCount: 1 },
-    { name: 'users_image', maxCount: 1 }
+    { name: 'users_image', maxCount: 1 },
+    { name: 'tutorial_1', maxCount: 1 },
+    { name: 'tutorial_2', maxCount: 1 },
+    { name: 'tutorial_3', maxCount: 1 }
   ]),
   toUploadResults,
   adminLandingController.createOrUpdateInfoAccueil
