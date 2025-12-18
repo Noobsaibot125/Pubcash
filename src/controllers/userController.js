@@ -9,13 +9,13 @@ const { v4: uuidv4 } = require('uuid');
 exports.getProfileForUser = async (req, res) => {
   try {
     const userId = req.user.id;
-    
+
     // 1. Récupérer l'utilisateur
     let [rows] = await pool.execute(
       `SELECT 
           id, nom, prenom, nom_utilisateur, email, contact, 
           commune_choisie, date_naissance, photo_profil, image_background,
-          code_parrainage, points,
+          code_parrainage, points, remuneration_utilisateur,
           id_google, id_facebook
        FROM utilisateurs 
        WHERE id = ?`,
@@ -30,37 +30,37 @@ exports.getProfileForUser = async (req, res) => {
 
     // --- CORRECTION IMAGE : GESTION DU FORMAT HEXADÉCIMAL ---
     const processImage = (rawData, folder) => {
-        if (!rawData) return null;
-        
-        // 1. Convertir si c'est un Buffer ou une string Hex (0x...)
-        let imageStr = rawData.toString();
-        if (imageStr.startsWith('0x')) {
-            // Décodage Hex vers String lisible
-            imageStr = Buffer.from(imageStr.slice(2), 'hex').toString('utf8');
-        }
+      if (!rawData) return null;
 
-        // 2. Vérifier si c'est une URL complète (Google/Facebook)
-        if (imageStr.startsWith('http')) {
-            return imageStr;
-        }
+      // 1. Convertir si c'est un Buffer ou une string Hex (0x...)
+      let imageStr = rawData.toString();
+      if (imageStr.startsWith('0x')) {
+        // Décodage Hex vers String lisible
+        imageStr = Buffer.from(imageStr.slice(2), 'hex').toString('utf8');
+      }
 
-        // 3. Sinon, c'est un fichier local -> On ajoute le domaine
-        return `${req.protocol}://${req.get('host')}/uploads/${folder}/${imageStr}`;
+      // 2. Vérifier si c'est une URL complète (Google/Facebook)
+      if (imageStr.startsWith('http')) {
+        return imageStr;
+      }
+
+      // 3. Sinon, c'est un fichier local -> On ajoute le domaine
+      return `${req.protocol}://${req.get('host')}/uploads/${folder}/${imageStr}`;
     };
 
     // On écrase les valeurs brutes par les URL traitées pour faciliter la vie au Frontend
     const profile_image_url = processImage(user.photo_profil, 'profile');
     const background_image_url = processImage(user.image_background, 'background');
-    
+
     // On met à jour l'objet user pour que le champ 'photo_profil' contienne le nom propre décodé (utile pour l'édition)
     // Optionnel : tu peux garder l'original si tu veux, mais le frontend a besoin de profile_image_url
     // ---------------------------------------------------------
 
     // --- Code parrainage (inchangé) ---
     if (!user.code_parrainage) {
-        const newCode = uuidv4().substring(0, 8).toUpperCase();
-        await pool.execute('UPDATE utilisateurs SET code_parrainage = ? WHERE id = ?', [newCode, userId]);
-        user.code_parrainage = newCode;
+      const newCode = uuidv4().substring(0, 8).toUpperCase();
+      await pool.execute('UPDATE utilisateurs SET code_parrainage = ? WHERE id = ?', [newCode, userId]);
+      user.code_parrainage = newCode;
     }
 
     const [referrals] = await pool.execute(
@@ -99,10 +99,10 @@ exports.updateProfileForUser = async (req, res) => {
     // 2. Récupérer l'utilisateur pour vérifier son type (Social ou Classique)
     // On récupère aussi id_google et id_facebook pour savoir si c'est un compte social
     const [rows] = await pool.execute(
-        'SELECT mot_de_passe, id_google, id_facebook FROM utilisateurs WHERE id = ?', 
-        [userId]
+      'SELECT mot_de_passe, id_google, id_facebook FROM utilisateurs WHERE id = ?',
+      [userId]
     );
-    
+
     if (!rows || rows.length === 0) {
       return res.status(404).json({ message: 'Utilisateur non trouvé.' });
     }
@@ -114,13 +114,13 @@ exports.updateProfileForUser = async (req, res) => {
 
     // Si l'utilisateur n'est PAS social (donc il a un mot de passe), on DOIT vérifier
     if (!isSocialUser && hasPassword) {
-        if (!currentPassword) {
-            return res.status(400).json({ message: 'Veuillez confirmer votre mot de passe pour enregistrer les modifications.' });
-        }
-        const isMatch = await bcrypt.compare(currentPassword, user.mot_de_passe);
-        if (!isMatch) {
-            return res.status(401).json({ message: 'Le mot de passe actuel est incorrect.' });
-        }
+      if (!currentPassword) {
+        return res.status(400).json({ message: 'Veuillez confirmer votre mot de passe pour enregistrer les modifications.' });
+      }
+      const isMatch = await bcrypt.compare(currentPassword, user.mot_de_passe);
+      if (!isMatch) {
+        return res.status(401).json({ message: 'Le mot de passe actuel est incorrect.' });
+      }
     }
     // Si c'est un utilisateur Social, on saute la vérification du mot de passe actuel
     // ----------------------------------------

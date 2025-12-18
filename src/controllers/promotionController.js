@@ -1040,6 +1040,15 @@ exports.convertPoints = async (req, res) => {
 
     await connection.commit();
 
+    // 5. Envoyer une notification de succès
+    notificationService.envoyerNotification(
+      userId,
+      'points_convertis',
+      'Conversion réussie ! 💰',
+      `Vous avez reçu ${amount} FCFA sur votre solde.`,
+      { amount, points, newPoints: currentPoints - points }
+    ).catch(e => console.error("Erreur notification conversion:", e));
+
     res.status(200).json({
       success: true,
       message: `Bravo ! Vous avez reçu ${amount} FCFA.`,

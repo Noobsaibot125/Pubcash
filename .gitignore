@@ -6,6 +6,7 @@ uploads/background/*
 uploads/videos/*
 uploads/thumbnails/*
 uploads/landing/*
+uploads/mobiletutorial/*
 uploads/profile/*
 firebase_env_config.txt
 fix_ending.txt
