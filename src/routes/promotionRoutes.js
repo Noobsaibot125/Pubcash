@@ -21,6 +21,9 @@ router.get('/utilisateur/gains', protect, promotionController.getUserEarnings);
 // POST /api/promotions/utilisateur/retrait
 router.post('/utilisateur/retrait', protect, promotionController.withdrawEarnings);
 
+// POST /api/promotions/utilisateur/convertir-points
+router.post('/utilisateur/convertir-points', protect, promotionController.convertPoints);
+
 // GET /api/promotions/utilisateur/historique-retraits
 router.get('/utilisateur/historique-retraits', protect, promotionController.getWithdrawalHistoryForUser);
 

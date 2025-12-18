@@ -215,8 +215,8 @@ const generateAndStoreTokens = async (res, user, userTable, role) => {
         accessToken,
         refreshToken,
         role: userRole,
-        user: { 
-            id: user.id, 
+        user: {
+            id: user.id,
             email: user.email,
             nom_utilisateur: user.nom_utilisateur, // Ajout utile
             photo_profil: user.photo_profil,       // Ajout utile
@@ -293,14 +293,14 @@ exports.loginClient = async (req, res) => {
 
         // --- CORRECTION RENFORCÉE ---
         // On vérifie si c'est 1 (nombre) ou true (booléen)
-      if (user.est_bloque == 1 || user.est_bloque === true) {
-    console.log(`Connexion REFUSÉE pour ${user.email} (Compte bloqué)`);
-    // AJOUT : error_code
-    return res.status(403).json({ 
-        message: "Votre compte a été bloqué par l'administrateur.",
-        error_code: "ACCOUNT_BLOCKED" 
-    });
-}
+        if (user.est_bloque == 1 || user.est_bloque === true) {
+            console.log(`Connexion REFUSÉE pour ${user.email} (Compte bloqué)`);
+            // AJOUT : error_code
+            return res.status(403).json({
+                message: "Votre compte a été bloqué par l'administrateur.",
+                error_code: "ACCOUNT_BLOCKED"
+            });
+        }
         // -----------------------------
 
         // Vérification cruciale pour les clients
@@ -348,7 +348,7 @@ const handleDailyLogin = async (userId) => {
             'SELECT id FROM daily_activity WHERE user_id = ? AND date = ?',
             [userId, today]
         );
-        
+
         if (todayActivity.length > 0) {
             await connection.rollback();
             return; // Déjà traité pour aujourd'hui
@@ -413,14 +413,14 @@ exports.loginUtilisateur = async (req, res) => {
         const user = rows[0];
 
         if (!user) return res.status(401).json({ message: 'Identifiant ou mot de passe incorrect.' });
-// --- AJOUT VÉRIFICATION BLOCAGE ---
-if (user.est_bloque == 1) {
-    // AJOUT : error_code
-    return res.status(403).json({ 
-        message: "Votre compte a été suspendu par l'administrateur.",
-        error_code: "ACCOUNT_BLOCKED"
-    });
-}
+        // --- AJOUT VÉRIFICATION BLOCAGE ---
+        if (user.est_bloque == 1) {
+            // AJOUT : error_code
+            return res.status(403).json({
+                message: "Votre compte a été suspendu par l'administrateur.",
+                error_code: "ACCOUNT_BLOCKED"
+            });
+        }
         // G├⌐rer les comptes Facebook sans mot de passe
         if (!user.mot_de_passe && user.id_facebook) {
             return res.status(401).json({ message: 'Ce compte est li├⌐ ├á Facebook. Veuillez vous connecter avec Facebook.' });
@@ -452,19 +452,19 @@ if (user.est_bloque == 1) {
 
         // GESTION DU BONUS DE CONNEXION
         await handleDailyLogin(user.id);
-// --- AJOUTER JUSTE AVANT LA GENERATION DES TOKENS ---
-    if (user.deletion_requested_at) {
-        const requestDate = new Date(user.deletion_requested_at);
-        const currentDate = new Date();
-        const daysDifference = (currentDate - requestDate) / (1000 * 3600 * 24);
+        // --- AJOUTER JUSTE AVANT LA GENERATION DES TOKENS ---
+        if (user.deletion_requested_at) {
+            const requestDate = new Date(user.deletion_requested_at);
+            const currentDate = new Date();
+            const daysDifference = (currentDate - requestDate) / (1000 * 3600 * 24);
 
-        if (daysDifference > 45) {
-            return res.status(403).json({ message: "Ce compte a été supprimé définitivement." });
-        } else {
-            // Réactivation automatique
-            await pool.execute('UPDATE utilisateurs SET deletion_requested_at = NULL WHERE id = ?', [user.id]);
+            if (daysDifference > 45) {
+                return res.status(403).json({ message: "Ce compte a été supprimé définitivement." });
+            } else {
+                // Réactivation automatique
+                await pool.execute('UPDATE utilisateurs SET deletion_requested_at = NULL WHERE id = ?', [user.id]);
+            }
         }
-    }
         await generateAndStoreTokens(res, user, 'utilisateurs', 'utilisateur');
 
     } catch (error) {
@@ -543,7 +543,7 @@ exports.registerUtilisateur = async (req, res) => {
 
         // 3. Hashage et Formatage
         const hashedPassword = await bcrypt.hash(mot_de_passe, 10);
-        
+
         let formattedDate = date_naissance;
         if (date_naissance.includes('/')) {
             const parts = date_naissance.split('/');
@@ -556,7 +556,7 @@ exports.registerUtilisateur = async (req, res) => {
             `INSERT INTO utilisateurs 
             (nom_utilisateur, email, mot_de_passe, ville, commune_choisie, est_actif,
             date_naissance, contact, genre, parrain_id, code_parrainage, date_inscription, created_at, updated_at) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())`, 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())`,
             [
                 nom_utilisateur,
                 email,
@@ -567,8 +567,8 @@ exports.registerUtilisateur = async (req, res) => {
                 formattedDate,
                 contact || null,
                 genre || null,
-                parrainId,    
-                myCode        
+                parrainId,
+                myCode
             ]
         );
 
@@ -583,7 +583,7 @@ exports.registerUtilisateur = async (req, res) => {
     } catch (error) {
         await connection.rollback(); // ANNULATION SI ERREUR
         console.error('❌ Erreur registerUtilisateur:', error);
-        
+
         if (error.code === 'ER_TRUNCATED_WRONG_VALUE') {
             return res.status(400).json({ message: 'Format de date invalide.' });
         }
@@ -633,32 +633,32 @@ exports.facebookAuth = async (req, res) => {
         let user = rows[0];
         if (user) {
             if (user.est_bloque == 1) {
-    // AJOUT : error_code
-    return res.status(403).json({ 
-        message: "Votre compte a été suspendu par l'administrateur.",
-        error_code: "ACCOUNT_BLOCKED"
-    });
-}
+                // AJOUT : error_code
+                return res.status(403).json({
+                    message: "Votre compte a été suspendu par l'administrateur.",
+                    error_code: "ACCOUNT_BLOCKED"
+                });
+            }
 
             // Vérification est_actif (si tu l'utilises)
             if (user.est_actif == 0) {
-                 return res.status(403).json({ message: "Votre compte a été désactivé." });
+                return res.status(403).json({ message: "Votre compte a été désactivé." });
             }
         }
-if (user && user.deletion_requested_at) {
-    const requestDate = new Date(user.deletion_requested_at);
-    const currentDate = new Date();
-    const daysDifference = (currentDate - requestDate) / (1000 * 3600 * 24);
+        if (user && user.deletion_requested_at) {
+            const requestDate = new Date(user.deletion_requested_at);
+            const currentDate = new Date();
+            const daysDifference = (currentDate - requestDate) / (1000 * 3600 * 24);
 
-    if (daysDifference > 45) {
-        return res.status(403).json({ message: "Ce compte a été supprimé définitivement." });
-    } else {
-        // Réactivation automatique silencieuse lors de la connexion sociale
-        await pool.execute('UPDATE utilisateurs SET deletion_requested_at = NULL WHERE id = ?', [user.id]);
-        // On met à jour l'objet user local pour que le reste du code soit propre
-        user.deletion_requested_at = null; 
-    }
-}
+            if (daysDifference > 45) {
+                return res.status(403).json({ message: "Ce compte a été supprimé définitivement." });
+            } else {
+                // Réactivation automatique silencieuse lors de la connexion sociale
+                await pool.execute('UPDATE utilisateurs SET deletion_requested_at = NULL WHERE id = ?', [user.id]);
+                // On met à jour l'objet user local pour que le reste du code soit propre
+                user.deletion_requested_at = null;
+            }
+        }
         if (!user) {
             // === LOGIQUE PARRAINAGE (NOUVEAU UTILISATEUR) ===
             let parrainId = null;
@@ -726,7 +726,7 @@ if (user && user.deletion_requested_at) {
                 photo_profil: user.photo_profil,
                 role: 'utilisateur',
                 push_notification: user.push_notification,
-                id_facebook: user.id_facebook, 
+                id_facebook: user.id_facebook,
                 commune: user.commune_choisie
             },
             profileCompleted: Boolean(user.commune_choisie && user.date_naissance)
@@ -735,6 +735,138 @@ if (user && user.deletion_requested_at) {
     } catch (error) {
         console.error("--- ERREUR DANS facebookAuth ---", error);
         res.status(500).json({ message: 'Erreur serveur.', error: error.message });
+    }
+};
+
+// POST /auth/social/register
+exports.registerSocial = async (req, res) => {
+    const { socialData, commune_choisie, date_naissance, contact, genre, code_parrainage, push_notification } = req.body;
+
+    if (!socialData || !socialData.email || !commune_choisie || !date_naissance || !contact || !genre) {
+        return res.status(400).json({ message: 'Données sociales, commune, date de naissance, contact et genre sont requis.' });
+    }
+
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+
+        // 1. Vérification de l'existence de l'utilisateur par email ou ID social
+        let user = null;
+        if (socialData.id_google) {
+            const [rows] = await connection.execute('SELECT * FROM utilisateurs WHERE id_google = ? OR email = ?', [socialData.id_google, socialData.email]);
+            user = rows[0];
+        } else if (socialData.id_facebook) {
+            const [rows] = await connection.execute('SELECT * FROM utilisateurs WHERE id_facebook = ? OR email = ?', [socialData.id_facebook, socialData.email]);
+            user = rows[0];
+        } else {
+            const [rows] = await connection.execute('SELECT * FROM utilisateurs WHERE email = ?', [socialData.email]);
+            user = rows[0];
+        }
+
+        if (user) {
+            await connection.rollback();
+            return res.status(409).json({ message: 'Un compte avec cet email ou ID social existe déjà.' });
+        }
+
+        // 2. Vérification du doublon de numéro de téléphone
+        const [existingContact] = await connection.execute('SELECT id FROM utilisateurs WHERE contact = ?', [contact]);
+        if (existingContact.length > 0) {
+            await connection.rollback();
+            return res.status(409).json({ message: 'Ce numéro de téléphone est déjà utilisé par un autre compte.' });
+        }
+
+        // 3. Logique de parrainage
+        let parrainId = null;
+        if (code_parrainage && code_parrainage.trim() !== '') {
+            const [parrains] = await connection.execute('SELECT id FROM utilisateurs WHERE code_parrainage = ?', [code_parrainage]);
+            if (parrains.length > 0) {
+                parrainId = parrains[0].id;
+                // Créditer le parrain
+                await connection.execute('UPDATE utilisateurs SET points = COALESCE(points, 0) + 30 WHERE id = ?', [parrainId]);
+                await connection.execute('INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, ?, ?, NOW())', [parrainId, 30, 'bonus_parrainage_inscription']);
+            }
+        }
+
+        // 4. Formatage de la date de naissance
+        let formattedDate = date_naissance;
+        if (date_naissance.includes('/')) {
+            const parts = date_naissance.split('/');
+            formattedDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+        }
+
+        // 5. Génération du code de parrainage personnel
+        const myCode = generateReferralCode(socialData.nom_utilisateur);
+
+        // 6. Insertion du nouvel utilisateur
+        const now = new Date();
+        const [inserted] = await connection.execute(
+            `INSERT INTO utilisateurs 
+            (nom_utilisateur, email, mot_de_passe, commune_choisie, est_actif, id_facebook, id_google, date_inscription, contact, photo_profil, nom, prenom, parrain_id, code_parrainage, genre, push_notification) 
+            VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                socialData.nom_utilisateur,
+                socialData.email,
+                commune_choisie,
+                true,
+                socialData.id_facebook || null,
+                socialData.id_google || null,
+                now,
+                contact,
+                socialData.photo_profil || null,
+                socialData.nom || null,
+                socialData.prenom || null,
+                parrainId,
+                myCode,
+                genre,
+                push_notification || null
+            ]
+        );
+        const insertedId = inserted.insertId;
+
+        const [rows] = await connection.execute('SELECT *, "utilisateur" as role FROM utilisateurs WHERE id = ?', [insertedId]);
+        user = rows[0];
+
+        await connection.commit();
+
+        // 7. Génération des tokens
+        const payload = { id: user.id, email: user.email, role: 'utilisateur' };
+        const newAccessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRATION || '90d' });
+        const newRefreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.REFRESH_TOKEN_EXPIRATION || '365d' });
+
+        await pool.execute(`UPDATE utilisateurs SET refresh_token = ?, est_en_ligne = 1, derniere_connexion = NOW() WHERE id = ?`, [newRefreshToken, user.id]);
+
+        await handleDailyLogin(user.id);
+
+        res.status(201).json({
+            accessToken: newAccessToken,
+            refreshToken: newRefreshToken,
+            user: {
+                id: user.id,
+                nom_utilisateur: user.nom_utilisateur,
+                email: user.email,
+                photo_profil: user.photo_profil,
+                role: 'utilisateur',
+                push_notification: user.push_notification,
+                id_facebook: user.id_facebook,
+                id_google: user.id_google,
+                commune: user.commune_choisie,
+                date_naissance: user.date_naissance,
+                contact: user.contact,
+                genre: user.genre
+            },
+            profileCompleted: true,
+            message: 'Inscription sociale complétée avec succès !'
+        });
+
+    } catch (error) {
+        await connection.rollback();
+        console.error("--- ERREUR DANS registerSocial ---", error);
+        if (error.code === 'ER_TRUNCATED_WRONG_VALUE') {
+            return res.status(400).json({ message: 'Format de date invalide.' });
+        }
+        res.status(500).json({ message: 'Erreur serveur lors de l\'inscription sociale.', error: error.message });
+    } finally {
+        connection.release();
     }
 };
 
@@ -838,58 +970,49 @@ exports.googleAuth = async (req, res) => {
         let user = rows[0];
         // --- CORRECTION : VÉRIFICATION DU BLOCAGE ---
         if (user) {
-          if (user.est_bloque == 1) {
-    // AJOUT : error_code
-    return res.status(403).json({ 
-        message: "Votre compte a été suspendu par l'administrateur.",
-        error_code: "ACCOUNT_BLOCKED"
-    });
-}
-             // Vérification est_actif
+            if (user.est_bloque == 1) {
+                // AJOUT : error_code
+                return res.status(403).json({
+                    message: "Votre compte a été suspendu par l'administrateur.",
+                    error_code: "ACCOUNT_BLOCKED"
+                });
+            }
+            // Vérification est_actif
             if (user.est_actif == 0) {
-                 return res.status(403).json({ message: "Votre compte a été désactivé." });
+                return res.status(403).json({ message: "Votre compte a été désactivé." });
             }
         }
-if (user && user.deletion_requested_at) {
-    const requestDate = new Date(user.deletion_requested_at);
-    const currentDate = new Date();
-    const daysDifference = (currentDate - requestDate) / (1000 * 3600 * 24);
+        if (user && user.deletion_requested_at) {
+            const requestDate = new Date(user.deletion_requested_at);
+            const currentDate = new Date();
+            const daysDifference = (currentDate - requestDate) / (1000 * 3600 * 24);
 
-    if (daysDifference > 45) {
-        return res.status(403).json({ message: "Ce compte a été supprimé définitivement." });
-    } else {
-        // Réactivation automatique silencieuse lors de la connexion sociale
-        await pool.execute('UPDATE utilisateurs SET deletion_requested_at = NULL WHERE id = ?', [user.id]);
-        // On met à jour l'objet user local pour que le reste du code soit propre
-        user.deletion_requested_at = null; 
-    }
-}
-        if (!user) {
-            // === LOGIQUE PARRAINAGE (NOUVEAU UTILISATEUR) ===
-            let parrainId = null;
-            if (code_parrainage && code_parrainage.trim() !== '') {
-                const [parrains] = await pool.execute('SELECT id FROM utilisateurs WHERE code_parrainage = ?', [code_parrainage]);
-                if (parrains.length > 0) {
-                    parrainId = parrains[0].id;
-                    // Créditer le parrain
-                    await pool.execute('UPDATE utilisateurs SET points = COALESCE(points, 0) + 30 WHERE id = ?', [parrainId]);
-                    await pool.execute('INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, ?, ?, NOW())', [parrainId, 30, 'bonus_parrainage_inscription']);
-                }
+            if (daysDifference > 45) {
+                return res.status(403).json({ message: "Ce compte a été supprimé définitivement." });
+            } else {
+                // Réactivation automatique silencieuse lors de la connexion sociale
+                await pool.execute('UPDATE utilisateurs SET deletion_requested_at = NULL WHERE id = ?', [user.id]);
+                // On met à jour l'objet user local pour que le reste du code soit propre
+                user.deletion_requested_at = null;
             }
+        }
+        if (!user) {
+            // === LOGIQUE ATOMIQUE (NOUVEAU UTILISATEUR) ===
+            return res.status(200).json({
+                isNewUser: true,
+                socialData: {
+                    id_google,
+                    nom,
+                    prenom,
+                    email,
+                    photo_profil,
+                    nom_utilisateur
+                },
+                message: "Veuillez compléter votre profil pour finaliser l'inscription."
+            });
             // ===============================================
-
-            // Création avec parrain_id
-            const now = new Date();
-            const [inserted] = await pool.execute(
-                `INSERT INTO utilisateurs 
-                (nom_utilisateur, email, mot_de_passe, commune_choisie, est_actif, id_google, date_inscription, photo_profil, nom, prenom, parrain_id) 
-                VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)`,
-                [nom_utilisateur, email, true, id_google, now, photo_profil, nom, prenom, parrainId]
-            );
-            const insertedId = inserted.insertId;
-            [rows] = await pool.execute('SELECT *, "utilisateur" as role FROM utilisateurs WHERE id = ?', [insertedId]);
-            user = rows[0];
-        } else {
+        }
+        else {
             // Mise à jour existante...
             const updates = [];
             const updateParams = [];
@@ -914,7 +1037,7 @@ if (user && user.deletion_requested_at) {
 
         const payload = { id: user.id, email: user.email, role: 'utilisateur' };
         const newAccessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRATION || '90d' });
-        const newRefreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.REFRESH_TOKEN_EXPIRATION || '365d' });
+        const newRefreshToken = jwt.sign(payload, process.env.REFRESH_TOKEN_EXPIRATION || '365d');
 
         await pool.execute(`UPDATE utilisateurs SET refresh_token = ?, est_en_ligne = 1, derniere_connexion = NOW() WHERE id = ?`, [newRefreshToken, user.id]);
 
@@ -975,9 +1098,9 @@ exports.refreshToken = async (req, res) => {
         await pool.execute(`UPDATE ${userTable} SET refresh_token = ? WHERE id = ?`, [newRefreshToken, decoded.id]);
 
         // 5. Renvoyer les deux tokens
-        res.json({ 
+        res.json({
             accessToken: newAccessToken,
-            refreshToken: newRefreshToken 
+            refreshToken: newRefreshToken
         });
 
     } catch (error) {
@@ -1400,7 +1523,7 @@ exports.requestAccountDeletion = async (req, res) => {
     // On suppose que l'ID utilisateur est passé via le middleware d'auth dans req.user.id
     // ou passé dans le body si tu n'utilises pas encore de middleware sur cette route.
     // Pour sécuriser, on demande le mot de passe.
-    const { id, password } = req.body; 
+    const { id, password } = req.body;
 
     if (!id || !password) {
         return res.status(400).json({ message: "ID et mot de passe requis." });
@@ -1430,23 +1553,23 @@ exports.requestAccountDeletion = async (req, res) => {
     }
 };
 exports.requestUserDeletion = async (req, res) => {
-    const { id, password, authProvider } = req.body; 
+    const { id, password, authProvider } = req.body;
 
     // Si c'est un utilisateur social (Google/Facebook), il n'a pas forcément de mot de passe
     // On se base sur l'ID (le token JWT aura déjà validé son identité via le middleware)
-    
+
     if (!id) return res.status(400).json({ message: "ID requis." });
 
     try {
         // Si l'utilisateur a un mot de passe (inscription email classique), on le vérifie
         if (authProvider === 'email') {
-             if (!password) return res.status(400).json({ message: "Mot de passe requis." });
-             
-             const [rows] = await pool.execute('SELECT mot_de_passe FROM utilisateurs WHERE id = ?', [id]);
-             if (rows.length === 0) return res.status(404).json({ message: "Utilisateur introuvable." });
-             
-             const isMatch = await bcrypt.compare(password, rows[0].mot_de_passe);
-             if (!isMatch) return res.status(401).json({ message: "Mot de passe incorrect." });
+            if (!password) return res.status(400).json({ message: "Mot de passe requis." });
+
+            const [rows] = await pool.execute('SELECT mot_de_passe FROM utilisateurs WHERE id = ?', [id]);
+            if (rows.length === 0) return res.status(404).json({ message: "Utilisateur introuvable." });
+
+            const isMatch = await bcrypt.compare(password, rows[0].mot_de_passe);
+            if (!isMatch) return res.status(401).json({ message: "Mot de passe incorrect." });
         }
 
         // Soft Delete
@@ -1460,5 +1583,113 @@ exports.requestUserDeletion = async (req, res) => {
     } catch (error) {
         console.error("Erreur requestUserDeletion:", error);
         res.status(500).json({ message: "Erreur serveur." });
+    }
+};
+
+// POST /auth/register-social
+exports.registerSocial = async (req, res) => {
+    const {
+        socialData,
+        commune_choisie,
+        date_naissance,
+        contact,
+        genre,
+        code_parrainage,
+        push_notification
+    } = req.body;
+
+    if (!socialData || !commune_choisie || !date_naissance || !contact) {
+        return res.status(400).json({ message: "Données incomplètes pour l'inscription." });
+    }
+
+    const { id_google, id_facebook, email, nom, prenom, photo_profil, nom_utilisateur } = socialData;
+
+    const connection = await pool.getConnection();
+
+    try {
+        await connection.beginTransaction();
+
+        // 1. Vérifier si l'utilisateur existe déjà (sécurité)
+        const queryCheck = email
+            ? 'SELECT id FROM utilisateurs WHERE (id_google = ? AND id_google IS NOT NULL) OR (id_facebook = ? AND id_facebook IS NOT NULL) OR email = ? OR contact = ?'
+            : 'SELECT id FROM utilisateurs WHERE (id_google = ? AND id_google IS NOT NULL) OR (id_facebook = ? AND id_facebook IS NOT NULL) OR contact = ?';
+
+        const paramsCheck = email ? [id_google || null, id_facebook || null, email, contact] : [id_google || null, id_facebook || null, contact];
+
+        const [existing] = await connection.execute(queryCheck, paramsCheck);
+        if (existing.length > 0) {
+            await connection.rollback();
+            return res.status(409).json({ message: "Un utilisateur avec cet email ou ce contact existe déjà." });
+        }
+
+        // 2. Parrainage
+        let parrainId = null;
+        if (code_parrainage && code_parrainage.trim() !== '') {
+            const [parrains] = await connection.execute('SELECT id FROM utilisateurs WHERE code_parrainage = ?', [code_parrainage]);
+            if (parrains.length > 0) {
+                parrainId = parrains[0].id;
+                await connection.execute('UPDATE utilisateurs SET points = COALESCE(points, 0) + 30 WHERE id = ?', [parrainId]);
+                await connection.execute('INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, ?, ?, NOW())', [parrainId, 30, 'bonus_parrainage_social']);
+            }
+        }
+
+        // 3. Insertion
+        const myReferralCode = generateReferralCode(nom_utilisateur);
+        const [result] = await connection.execute(
+            `INSERT INTO utilisateurs 
+            (nom_utilisateur, email, mot_de_passe, ville, commune_choisie, est_actif, id_google, id_facebook, 
+            date_inscription, contact, photo_profil, nom, prenom, parrain_id, code_parrainage, date_naissance, genre, push_notification, created_at) 
+            VALUES (?, ?, NULL, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+            [
+                nom_utilisateur,
+                email || null,
+                '', // ville vide par défaut ou transmise? 
+                commune_choisie,
+                true,
+                id_google || null,
+                id_facebook || null,
+                contact,
+                photo_profil || null,
+                nom || null,
+                prenom || null,
+                parrainId,
+                myReferralCode,
+                date_naissance,
+                genre || null,
+                push_notification || null
+            ]
+        );
+
+        const userId = result.insertId;
+        await connection.commit();
+
+        // 4. Génération des tokens
+        const payload = { id: userId, email: email, role: 'utilisateur' };
+        const accessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRATION || '90d' });
+        const refreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.REFRESH_TOKEN_EXPIRATION || '365d' });
+
+        await pool.execute(`UPDATE utilisateurs SET refresh_token = ?, est_en_ligne = 1, derniere_connexion = NOW() WHERE id = ?`, [refreshToken, userId]);
+
+        res.status(201).json({
+            message: "Inscription sociale réussie.",
+            accessToken,
+            refreshToken,
+            user: {
+                id: userId,
+                nom_utilisateur,
+                email,
+                photo_profil,
+                role: 'utilisateur',
+                commune: commune_choisie
+            },
+            profileCompleted: true
+        });
+
+    } catch (error) {
+        await connection.rollback();
+        console.error("Erreur registerSocial:", error);
+        res.status(500).json({ message: "Erreur serveur lors de l'inscription sociale." });
+    } finally {
+        connection.release();
     }
 };
