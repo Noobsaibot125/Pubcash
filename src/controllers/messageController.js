@@ -100,52 +100,51 @@ exports.sendMessage = async (req, res) => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [senderId, senderType, destinataireId, destinataireType, contenu || '', typeContenu, urlMedia, nomFichier, tailleFichier]
         );
-        // --- AJOUT POUR SOCKET.IO ---
-        try {
-            // Récupérer l'instance IO depuis l'objet app (express)
-            const io = req.app.get('io');
+        // --- AJOUT POUR SOCKET.IO & NOTIFICATIONS ---
+        let shouldNotify = true;
 
-            // Préparer le message pour le socket
-            // (J'ai ajouté la date pour que ce soit complet)
-            const [msgRow] = await connection.execute('SELECT date_envoi FROM messages WHERE id = ?', [result.insertId]);
+        // Si l'expéditeur est un client et le destinataire un utilisateur
+        if (senderType === 'client' && destinataireType === 'utilisateur') {
+            const [follow] = await connection.execute(
+                'SELECT id FROM suivis_promoteurs WHERE id_utilisateur = ? AND id_client = ?',
+                [destinataireId, senderId]
+            );
+            if (follow.length === 0) {
+                shouldNotify = false;
+                console.log(`[DEBUG] Blocage Socket & Notif: l'utilisateur ${destinataireId} ne suit pas le promoteur ${senderId}`);
+            }
+        }
 
-            const socketMessage = {
-                id: result.insertId,
-                id_expediteur: senderId,
-                type_expediteur: senderType,
-                id_destinataire: parseInt(destinataireId),
-                type_destinataire: destinataireType,
-                contenu: contenu || '',
-                type_contenu: typeContenu,
-                url_media: urlMedia,
-                date_envoi: msgRow[0].date_envoi,
-                lu: 0
-            };
+        // Émettre Socket uniquement si autorisé
+        if (shouldNotify) {
+            try {
+                const io = req.app.get('io');
+                const [msgRow] = await connection.execute('SELECT date_envoi FROM messages WHERE id = ?', [result.insertId]);
 
-            // Envoyer à la room du destinataire
-            const roomDestinataire = `${destinataireType}_${destinataireId}`;
-            io.to(roomDestinataire).emit('receive_message', socketMessage);
-            console.log(`Socket message envoyé à : ${roomDestinataire}`);
+                const socketMessage = {
+                    id: result.insertId,
+                    id_expediteur: senderId,
+                    type_expediteur: senderType,
+                    id_destinataire: parseInt(destinataireId),
+                    type_destinataire: destinataireType,
+                    contenu: contenu || '',
+                    type_contenu: typeContenu,
+                    url_media: urlMedia,
+                    date_envoi: msgRow[0].date_envoi,
+                    lu: 0
+                };
 
-        } catch (socketError) {
-            console.error("Erreur d'envoi Socket.io:", socketError);
-            // On ne bloque pas la réponse HTTP si le socket échoue
+                const roomDestinataire = `${destinataireType}_${destinataireId}`;
+                io.to(roomDestinataire).emit('receive_message', socketMessage);
+                console.log(`Socket message envoyé à : ${roomDestinataire}`);
+
+            } catch (socketError) {
+                console.error("Erreur d'envoi Socket.io:", socketError);
+            }
         }
         // 4. Notification Push
         if (destinataireType === 'utilisateur') {
-            // Vérifier si l'utilisateur suit ce promoteur (si expéditeur = client)
-            let shouldNotify = true;
-            if (senderType === 'client') {
-                const [follow] = await connection.execute(
-                    'SELECT id FROM suivis_promoteurs WHERE id_utilisateur = ? AND id_client = ?',
-                    [destinataireId, senderId]
-                );
-                if (follow.length === 0) {
-                    shouldNotify = false;
-                    console.log(`[DEBUG] Notification bloquée: l'utilisateur ${destinataireId} ne suit pas le promoteur ${senderId}`);
-                }
-            }
-
+            // Note: shouldNotify a déjà été calculé plus haut pour le Socket
             if (shouldNotify) {
                 // On récupère les infos FRAÎCHES de l'expéditeur depuis la BDD
                 let senderName = "Un promoteur";
@@ -240,22 +239,46 @@ exports.getConversations = async (req, res) => {
             }
         }
 
+        // Optimisation: Récupérer tous les suivis de l'utilisateur d'un coup
+        let userFollows = new Set();
+        if (userType === 'utilisateur') {
+            const [follows] = await pool.execute(
+                'SELECT id_client FROM suivis_promoteurs WHERE id_utilisateur = ?',
+                [userId]
+            );
+            follows.forEach(f => userFollows.add(f.id_client));
+        }
+
         // Enrichir avec les infos du contact
         const enrichedConversations = [];
         for (const [key, msg] of conversationsMap) {
             const [contactType, contactId] = key.split('_');
-            let contactInfo = null;
+            const contactIdInt = parseInt(contactId);
 
+            // FILTRE ANTI-SPAM (Option A - Robust)
+            // Si le contact est un client, que je suis un utilisateur, 
+            // que je ne le SUIS PAS, et que le message est NON LU (donc nouveau spam),
+            // ALORS je ne l'affiche pas dans la liste (ou j'affiche le précédent, mais ici on skip simplment)
+            // Note: Comme on a groupé par contact, si le dernier est spam, on risque de cacher toute la conv.
+            // C'est acceptable pour "ne pas voir venir". L'accès historique se fera via recherche ou réabonnement.
+            if (userType === 'utilisateur' && contactType === 'client') {
+                if (!userFollows.has(contactIdInt)) {
+                    // Si le dernier message est de lui vers moi et non lu -> SPAM
+                    if (msg.type_expediteur === 'client' && msg.lu === 0) {
+                        continue; // On masque cette conversation "spammy" de l'inbox
+                    }
+                }
+            }
+
+            let contactInfo = null;
+            // ... (reste du code inchangé pour info contact)
             if (contactType === 'client') {
-                // === CORRECTION IMPORTANTE ICI ===
-                // La table clients utilise 'profile_image_url'
                 const [client] = await pool.execute(
                     'SELECT id, nom_utilisateur, profile_image_url AS photo_profil FROM clients WHERE id = ?',
                     [contactId]
                 );
                 contactInfo = client[0];
             } else {
-                // La table utilisateurs utilise bien 'photo_profil'
                 const [user] = await pool.execute(
                     'SELECT id, nom_utilisateur, photo_profil FROM utilisateurs WHERE id = ?',
                     [contactId]
@@ -272,7 +295,7 @@ exports.getConversations = async (req, res) => {
             );
 
             enrichedConversations.push({
-                contactId: parseInt(contactId),
+                contactId: contactIdInt,
                 contactType,
                 contactName: contactInfo?.nom_utilisateur || 'Inconnu',
                 contactPhoto: contactInfo?.photo_profil,
@@ -310,6 +333,22 @@ exports.getMessages = async (req, res) => {
     }
 
     try {
+        let excludeSpamCondition = "";
+
+        // Si je suis un utilisateur parlant à un client, vérifier si je le suis
+        if (userType === 'utilisateur' && contactType === 'client') {
+            const [follow] = await pool.execute(
+                'SELECT id FROM suivis_promoteurs WHERE id_utilisateur = ? AND id_client = ?',
+                [userId, contactId]
+            );
+
+            // Si je ne le suis pas, je ne veux pas voir ses NOUVEAUX messages (non lus)
+            if (follow.length === 0) {
+                // Exclure les messages venant du client qui sont NON LUS
+                excludeSpamCondition = ` AND NOT (id_expediteur = ${contactId} AND type_expediteur = 'client' AND lu = FALSE) `;
+            }
+        }
+
         const query = `
             SELECT * FROM messages 
             WHERE (
@@ -317,6 +356,7 @@ exports.getMessages = async (req, res) => {
                 OR 
                 (id_expediteur = ? AND type_expediteur = ? AND id_destinataire = ? AND type_destinataire = ?)
             )
+            ${excludeSpamCondition}
             ORDER BY date_envoi DESC
             LIMIT ${limit} OFFSET ${offset}
         `;
