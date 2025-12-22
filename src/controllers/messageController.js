@@ -310,60 +310,33 @@ exports.getMessages = async (req, res) => {
     }
 
     try {
-        let followDate = null;
-
-        // Si l'utilisateur mobile parle à un client, vérifier le statut de suivi et la date
-        if (userType === 'utilisateur' && contactType === 'client') {
-            const [followStatus] = await pool.execute(
-                'SELECT date_suivi FROM suivis_promoteurs WHERE id_utilisateur = ? AND id_client = ?',
-                [userId, contactId]
-            );
-
-            if (followStatus.length === 0) {
-                // Pas de suivi = pas de messages affichés pour l'utilisateur
-                return res.status(200).json([]);
-            }
-
-            followDate = followStatus[0].date_suivi;
-        }
-
-        let query = `
+        const query = `
             SELECT * FROM messages 
             WHERE (
                 (id_expediteur = ? AND type_expediteur = ? AND id_destinataire = ? AND type_destinataire = ?)
                 OR 
                 (id_expediteur = ? AND type_expediteur = ? AND id_destinataire = ? AND type_destinataire = ?)
             )
+            ORDER BY date_envoi DESC
+            LIMIT ${limit} OFFSET ${offset}
         `;
+
+        // ASTUCE : J'ai sorti LIMIT et OFFSET du tableau des paramètres '?' et je les ai mis directement dans la string
+        // (c'est safe car on a fait parseInt juste avant). Cela résout souvent les problèmes de drivers MySQL récalcitrants.
 
         const params = [
             userId, userType, contactId, contactType,  // Cas 1 : J'envoie
             contactId, contactType, userId, userType   // Cas 2 : Je reçois
         ];
 
-        // Filtrer par date de suivi si applicable (uniquement les messages après l'abonnement)
-        if (followDate) {
-            query += ` AND date_envoi >= ?`;
-            params.push(followDate);
-        }
-
-        query += ` ORDER BY date_envoi DESC LIMIT ${limit} OFFSET ${offset}`;
-
-        // ASTUCE : J'ai sorti LIMIT et OFFSET du tableau des paramètres '?' et je les ai mis directement dans la string
-        // (c'est safe car on a fait parseInt juste avant). Cela résout souvent les problèmes de drivers MySQL récalcitrants.
-
         const [messages] = await pool.execute(query, params);
-
-        // Marquer les messages reçus comme lus (uniquement ceux qui sont filtrés) ...
-        // ... (Update lu code reste similaire mais on filtre par date si besoin ici aussi?)
-        // En réalité markAsRead peut rester global, mais getMessages ne renvoie que le autorisé.
 
         // Marquer les messages reçus comme lus (en tâche de fond, sans await bloquant)
         pool.execute(
             `UPDATE messages SET lu = TRUE 
              WHERE id_expediteur = ? AND type_expediteur = ? 
-             AND id_destinataire = ? AND type_destinataire = ? AND lu = FALSE ${followDate ? 'AND date_envoi >= ?' : ''}`,
-            followDate ? [contactId, contactType, userId, userType, followDate] : [contactId, contactType, userId, userType]
+             AND id_destinataire = ? AND type_destinataire = ? AND lu = FALSE`,
+            [contactId, contactType, userId, userType]
         ).catch(err => console.error("Erreur update lu:", err));
 
         res.status(200).json(messages.reverse());

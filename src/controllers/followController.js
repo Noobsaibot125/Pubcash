@@ -29,6 +29,19 @@ exports.followPromoter = async (req, res) => {
             [userId, clientId]
         );
 
+        // NETTOYAGE: Supprimer les messages non lus (spam) reçus pendant la période de non-suivi
+        try {
+            await pool.execute(
+                `DELETE FROM messages 
+                 WHERE id_expediteur = ? AND type_expediteur = 'client' 
+                 AND id_destinataire = ? AND type_destinataire = 'utilisateur' 
+                 AND lu = FALSE`,
+                [clientId, userId]
+            );
+        } catch (cleanupError) {
+            console.error("Erreur nettoyage messages:", cleanupError);
+        }
+
         res.status(201).json({ message: 'Vous suivez maintenant ce promoteur', isFollowing: true });
 
     } catch (error) {
@@ -117,14 +130,14 @@ exports.getFollowers = async (req, res) => {
              ORDER BY s.date_suivi DESC`,
             [clientId]
         );
-        
+
         // Note: Pour les utilisateurs, la table s'appelle bien 'photo_profil' ou 'profile_image_url' ?
         // Vérifie ta table utilisateurs. Si c'est 'profile_image_url' aussi, change la requête ci-dessus.
-        
+
         // Formatage URL
         const formattedFollowers = followers.map(item => ({
-             ...item,
-             photo_profil: item.photo_profil && !item.photo_profil.startsWith('http')
+            ...item,
+            photo_profil: item.photo_profil && !item.photo_profil.startsWith('http')
                 ? `${baseUrl}/uploads/profile/${item.photo_profil}`
                 : item.photo_profil
         }));
