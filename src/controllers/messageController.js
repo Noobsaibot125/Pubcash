@@ -87,7 +87,7 @@ exports.sendMessage = async (req, res) => {
             if (['.jpg', '.jpeg', '.png', '.gif'].includes(ext)) typeContenu = 'image';
             else if (['.mp4', '.mov', '.avi'].includes(ext)) typeContenu = 'video';
             else typeContenu = 'fichier';
-            
+
             urlMedia = `/uploads/messages/${req.file.filename}`;
             nomFichier = req.file.originalname;
             tailleFichier = req.file.size;
@@ -100,81 +100,95 @@ exports.sendMessage = async (req, res) => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [senderId, senderType, destinataireId, destinataireType, contenu || '', typeContenu, urlMedia, nomFichier, tailleFichier]
         );
-// --- AJOUT POUR SOCKET.IO ---
-try {
-    // Récupérer l'instance IO depuis l'objet app (express)
-    const io = req.app.get('io'); 
+        // --- AJOUT POUR SOCKET.IO ---
+        try {
+            // Récupérer l'instance IO depuis l'objet app (express)
+            const io = req.app.get('io');
 
-    // Préparer le message pour le socket
-    // (J'ai ajouté la date pour que ce soit complet)
-    const [msgRow] = await connection.execute('SELECT date_envoi FROM messages WHERE id = ?', [result.insertId]);
-    
-    const socketMessage = {
-        id: result.insertId,
-        id_expediteur: senderId,
-        type_expediteur: senderType,
-        id_destinataire: parseInt(destinataireId),
-        type_destinataire: destinataireType,
-        contenu: contenu || '',
-        type_contenu: typeContenu,
-        url_media: urlMedia,
-        date_envoi: msgRow[0].date_envoi,
-        lu: 0
-    };
+            // Préparer le message pour le socket
+            // (J'ai ajouté la date pour que ce soit complet)
+            const [msgRow] = await connection.execute('SELECT date_envoi FROM messages WHERE id = ?', [result.insertId]);
 
-    // Envoyer à la room du destinataire
-    const roomDestinataire = `${destinataireType}_${destinataireId}`;
-    io.to(roomDestinataire).emit('receive_message', socketMessage);
-    console.log(`Socket message envoyé à : ${roomDestinataire}`);
+            const socketMessage = {
+                id: result.insertId,
+                id_expediteur: senderId,
+                type_expediteur: senderType,
+                id_destinataire: parseInt(destinataireId),
+                type_destinataire: destinataireType,
+                contenu: contenu || '',
+                type_contenu: typeContenu,
+                url_media: urlMedia,
+                date_envoi: msgRow[0].date_envoi,
+                lu: 0
+            };
 
-} catch (socketError) {
-    console.error("Erreur d'envoi Socket.io:", socketError);
-    // On ne bloque pas la réponse HTTP si le socket échoue
-}
+            // Envoyer à la room du destinataire
+            const roomDestinataire = `${destinataireType}_${destinataireId}`;
+            io.to(roomDestinataire).emit('receive_message', socketMessage);
+            console.log(`Socket message envoyé à : ${roomDestinataire}`);
+
+        } catch (socketError) {
+            console.error("Erreur d'envoi Socket.io:", socketError);
+            // On ne bloque pas la réponse HTTP si le socket échoue
+        }
         // 4. Notification Push
         if (destinataireType === 'utilisateur') {
-            // === CORRECTION MAJEURE ICI ===
-            // On récupère les infos FRAÎCHES de l'expéditeur depuis la BDD
-            let senderName = "Un promoteur";
-            let senderPhoto = "";
-
+            // Vérifier si l'utilisateur suit ce promoteur (si expéditeur = client)
+            let shouldNotify = true;
             if (senderType === 'client') {
-                const [clientRows] = await connection.execute(
-                    'SELECT nom_utilisateur, nom, profile_image_url FROM clients WHERE id = ?', 
-                    [senderId]
+                const [follow] = await connection.execute(
+                    'SELECT id FROM suivis_promoteurs WHERE id_utilisateur = ? AND id_client = ?',
+                    [destinataireId, senderId]
                 );
-                if (clientRows.length > 0) {
-                    senderName = clientRows[0].nom_utilisateur || clientRows[0].nom;
-                    senderPhoto = clientRows[0].profile_image_url || "";
-                }
-            } else {
-                const [userRows] = await connection.execute(
-                    'SELECT nom_utilisateur, nom, photo_profil FROM utilisateurs WHERE id = ?', 
-                    [senderId]
-                );
-                if (userRows.length > 0) {
-                    senderName = userRows[0].nom_utilisateur || userRows[0].nom;
-                    senderPhoto = userRows[0].photo_profil || "";
+                if (follow.length === 0) {
+                    shouldNotify = false;
+                    console.log(`[DEBUG] Notification bloquée: l'utilisateur ${destinataireId} ne suit pas le promoteur ${senderId}`);
                 }
             }
 
-            console.log(`[DEBUG NOTIF] Envoi de: ${senderName}, Photo: ${senderPhoto}`);
+            if (shouldNotify) {
+                // On récupère les infos FRAÎCHES de l'expéditeur depuis la BDD
+                let senderName = "Un promoteur";
+                let senderPhoto = "";
 
-            // Envoi asynchrone (ne bloque pas la réponse)
-            notificationService.envoyerNotification(
-                destinataireId,
-                'nouveau_message',
-                'Nouveau message', // Titre générique, le mobile utilisera sender_name si dispo
-                `${senderName} vous a envoyé un message.`,
-                {
-                    type: 'nouveau_message',
-                    sender_id: senderId,
-                    sender_type: senderType,
-                    sender_name: senderName,
-                    sender_photo: senderPhoto, // La photo est maintenant garantie d'être celle de la BDD
-                    message_id: result.insertId
+                if (senderType === 'client') {
+                    const [clientRows] = await connection.execute(
+                        'SELECT nom_utilisateur, nom, profile_image_url FROM clients WHERE id = ?',
+                        [senderId]
+                    );
+                    if (clientRows.length > 0) {
+                        senderName = clientRows[0].nom_utilisateur || clientRows[0].nom;
+                        senderPhoto = clientRows[0].profile_image_url || "";
+                    }
+                } else {
+                    const [userRows] = await connection.execute(
+                        'SELECT nom_utilisateur, nom, photo_profil FROM utilisateurs WHERE id = ?',
+                        [senderId]
+                    );
+                    if (userRows.length > 0) {
+                        senderName = userRows[0].nom_utilisateur || userRows[0].nom;
+                        senderPhoto = userRows[0].photo_profil || "";
+                    }
                 }
-            ).catch(err => console.error("Erreur Push Notif:", err));
+
+                console.log(`[DEBUG NOTIF] Envoi de: ${senderName}, Photo: ${senderPhoto}`);
+
+                // Envoi asynchrone
+                notificationService.envoyerNotification(
+                    destinataireId,
+                    'nouveau_message',
+                    'Nouveau message',
+                    `${senderName} vous a envoyé un message.`,
+                    {
+                        type: 'nouveau_message',
+                        sender_id: senderId,
+                        sender_type: senderType,
+                        sender_name: senderName,
+                        sender_photo: senderPhoto,
+                        message_id: result.insertId
+                    }
+                ).catch(err => console.error("Erreur Push Notif:", err));
+            }
         }
 
         connection.release();
@@ -232,7 +246,7 @@ exports.getConversations = async (req, res) => {
             const [contactType, contactId] = key.split('_');
             let contactInfo = null;
 
-           if (contactType === 'client') {
+            if (contactType === 'client') {
                 // === CORRECTION IMPORTANTE ICI ===
                 // La table clients utilise 'profile_image_url'
                 const [client] = await pool.execute(
@@ -281,11 +295,11 @@ exports.getConversations = async (req, res) => {
 exports.getMessages = async (req, res) => {
     const userId = req.user.id;
     const userType = req.user.role === 'client' ? 'client' : 'utilisateur';
-    
+
     // On force la conversion en entier pour éviter les bugs SQL
     const contactId = parseInt(req.params.contactId, 10);
     const contactType = req.params.contactType;
-    
+
     const page = parseInt(req.query.page, 10) || 1;
     const limit = parseInt(req.query.limit, 10) || 50;
     const offset = (page - 1) * limit;
@@ -296,33 +310,60 @@ exports.getMessages = async (req, res) => {
     }
 
     try {
-        const query = `
+        let followDate = null;
+
+        // Si l'utilisateur mobile parle à un client, vérifier le statut de suivi et la date
+        if (userType === 'utilisateur' && contactType === 'client') {
+            const [followStatus] = await pool.execute(
+                'SELECT date_suivi FROM suivis_promoteurs WHERE id_utilisateur = ? AND id_client = ?',
+                [userId, contactId]
+            );
+
+            if (followStatus.length === 0) {
+                // Pas de suivi = pas de messages affichés pour l'utilisateur
+                return res.status(200).json([]);
+            }
+
+            followDate = followStatus[0].date_suivi;
+        }
+
+        let query = `
             SELECT * FROM messages 
             WHERE (
                 (id_expediteur = ? AND type_expediteur = ? AND id_destinataire = ? AND type_destinataire = ?)
                 OR 
                 (id_expediteur = ? AND type_expediteur = ? AND id_destinataire = ? AND type_destinataire = ?)
             )
-            ORDER BY date_envoi DESC
-            LIMIT ${limit} OFFSET ${offset}
         `;
-        
-        // ASTUCE : J'ai sorti LIMIT et OFFSET du tableau des paramètres '?' et je les ai mis directement dans la string
-        // (c'est safe car on a fait parseInt juste avant). Cela résout souvent les problèmes de drivers MySQL récalcitrants.
 
         const params = [
             userId, userType, contactId, contactType,  // Cas 1 : J'envoie
             contactId, contactType, userId, userType   // Cas 2 : Je reçois
         ];
 
+        // Filtrer par date de suivi si applicable (uniquement les messages après l'abonnement)
+        if (followDate) {
+            query += ` AND date_envoi >= ?`;
+            params.push(followDate);
+        }
+
+        query += ` ORDER BY date_envoi DESC LIMIT ${limit} OFFSET ${offset}`;
+
+        // ASTUCE : J'ai sorti LIMIT et OFFSET du tableau des paramètres '?' et je les ai mis directement dans la string
+        // (c'est safe car on a fait parseInt juste avant). Cela résout souvent les problèmes de drivers MySQL récalcitrants.
+
         const [messages] = await pool.execute(query, params);
+
+        // Marquer les messages reçus comme lus (uniquement ceux qui sont filtrés) ...
+        // ... (Update lu code reste similaire mais on filtre par date si besoin ici aussi?)
+        // En réalité markAsRead peut rester global, mais getMessages ne renvoie que le autorisé.
 
         // Marquer les messages reçus comme lus (en tâche de fond, sans await bloquant)
         pool.execute(
             `UPDATE messages SET lu = TRUE 
              WHERE id_expediteur = ? AND type_expediteur = ? 
-             AND id_destinataire = ? AND type_destinataire = ? AND lu = FALSE`,
-            [contactId, contactType, userId, userType]
+             AND id_destinataire = ? AND type_destinataire = ? AND lu = FALSE ${followDate ? 'AND date_envoi >= ?' : ''}`,
+            followDate ? [contactId, contactType, userId, userType, followDate] : [contactId, contactType, userId, userType]
         ).catch(err => console.error("Erreur update lu:", err));
 
         res.status(200).json(messages.reverse());
