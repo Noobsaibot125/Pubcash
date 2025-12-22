@@ -230,15 +230,6 @@ exports.getConversations = async (req, res) => {
             [userType, userId, userType, userId, userId, userType, userId, userType]
         );
 
-        // Grouper par contact et garder le dernier message
-        const conversationsMap = new Map();
-        for (const msg of conversations) {
-            const key = `${msg.contact_type}_${msg.contact_id}`;
-            if (!conversationsMap.has(key)) {
-                conversationsMap.set(key, msg);
-            }
-        }
-
         // Optimisation: Récupérer tous les suivis de l'utilisateur d'un coup
         let userFollows = new Set();
         if (userType === 'utilisateur') {
@@ -249,26 +240,35 @@ exports.getConversations = async (req, res) => {
             follows.forEach(f => userFollows.add(f.id_client));
         }
 
+        // Grouper par contact et garder le dernier message VALIDE (non-spam)
+        const conversationsMap = new Map();
+        for (const msg of conversations) {
+            const key = `${msg.contact_type}_${msg.contact_id}`;
+            const contactIdInt = parseInt(msg.contact_id);
+
+            // FILTRE ANTI-SPAM (Logic Correction)
+            // Si le message est envoyé par un client vers un utilisateur qui ne le suit pas
+            // ET qu'il est NON LU, c'est du spam invisible. On l'ignore.
+            // Comme la liste est triée par date DESC, on tombera sur le message précédent (historique) au tour suivant.
+            if (userType === 'utilisateur' && msg.type_expediteur === 'client') {
+                if (!userFollows.has(msg.id_expediteur) && msg.lu === 0) {
+                    continue; // Skip this spam message
+                }
+            }
+
+            if (!conversationsMap.has(key)) {
+                conversationsMap.set(key, msg);
+            }
+        }
+
         // Enrichir avec les infos du contact
         const enrichedConversations = [];
         for (const [key, msg] of conversationsMap) {
             const [contactType, contactId] = key.split('_');
             const contactIdInt = parseInt(contactId);
 
-            // FILTRE ANTI-SPAM (Option A - Robust)
-            // Si le contact est un client, que je suis un utilisateur, 
-            // que je ne le SUIS PAS, et que le message est NON LU (donc nouveau spam),
-            // ALORS je ne l'affiche pas dans la liste (ou j'affiche le précédent, mais ici on skip simplment)
-            // Note: Comme on a groupé par contact, si le dernier est spam, on risque de cacher toute la conv.
-            // C'est acceptable pour "ne pas voir venir". L'accès historique se fera via recherche ou réabonnement.
-            if (userType === 'utilisateur' && contactType === 'client') {
-                if (!userFollows.has(contactIdInt)) {
-                    // Si le dernier message est de lui vers moi et non lu -> SPAM
-                    if (msg.type_expediteur === 'client' && msg.lu === 0) {
-                        continue; // On masque cette conversation "spammy" de l'inbox
-                    }
-                }
-            }
+            // Ancien filtre retiré ici car déjà traité dans la map construction
+
 
             let contactInfo = null;
             // ... (reste du code inchangé pour info contact)
