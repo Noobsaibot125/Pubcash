@@ -388,16 +388,36 @@ exports.getMessages = async (req, res) => {
 };
 
 // Compter les messages non lus
+// Compter les messages non lus (filtré par abonnement)
 exports.getUnreadCount = async (req, res) => {
     const userId = req.user.id;
     const userType = req.user.role === 'client' ? 'client' : 'utilisateur';
 
     try {
-        const [rows] = await pool.execute(
-            `SELECT COUNT(*) as count FROM messages 
-       WHERE id_destinataire = ? AND type_destinataire = ? AND lu = FALSE`,
-            [userId, userType]
-        );
+        let query = `
+            SELECT COUNT(*) as count FROM messages 
+            WHERE id_destinataire = ? AND type_destinataire = ? AND lu = FALSE
+        `;
+
+        // Si je suis un utilisateur, je ne veux compter que les messages des gens que je SUIS
+        // (pour l'Option A - Robust : Spam invisible)
+        if (userType === 'utilisateur') {
+            query += `
+                AND (
+                    type_expediteur != 'client' 
+                    OR 
+                    id_expediteur IN (
+                        SELECT id_client FROM suivis_promoteurs WHERE id_utilisateur = ?
+                    )
+                )
+            `;
+            // On ajoute userId une deuxième fois pour la sous-requête
+            var params = [userId, userType, userId];
+        } else {
+            var params = [userId, userType];
+        }
+
+        const [rows] = await pool.execute(query, params);
 
         res.status(200).json({ unreadCount: rows[0].count });
 
