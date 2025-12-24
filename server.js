@@ -17,6 +17,7 @@ const pool = require('./src/config/db');
 const publicRoutes = require('./src/routes/publicRoutes');
 // --- AJOUT : Import du service de nettoyage ---
 const initCleanupJob = require('./src/services/cleanupService');
+const initDatabase = require('./src/services/dbInitService');
 const geoMiddleware = require('./src/middlewares/geoMiddleware');
 const maintenanceMiddleware = require('./src/middlewares/maintenanceMiddleware');
 const settingsRoutes = require('./src/routes/settingsRoutes');
@@ -247,14 +248,14 @@ io.on('connection', (socket) => {
   // --- 1. GESTION DU CHAT (NOUVEAU) ---
   // Permet à un utilisateur (client ou utilisateur) de s'enregistrer pour recevoir des messages
   socket.on('register_chat', (data) => {
-      // data doit contenir { userId: 1, userType: 'client' } ou 'utilisateur'
-      if (!data || !data.userId || !data.userType) return;
-      
-      const roomName = `${data.userType}_${data.userId}`;
-      socket.join(roomName);
-      console.log(`💬 Chat: Client ${socket.id} a rejoint la room ${roomName}`);
+    // data doit contenir { userId: 1, userType: 'client' } ou 'utilisateur'
+    if (!data || !data.userId || !data.userType) return;
+
+    const roomName = `${data.userType}_${data.userId}`;
+    socket.join(roomName);
+    console.log(`💬 Chat: Client ${socket.id} a rejoint la room ${roomName}`);
   });
-  
+
   // --- 2. GESTION DES NOTIFICATIONS CIBLÉES (RETRAITS) ---
   socket.on('join-user-room', (userId) => {
     socket.join(`user-${userId}`);
@@ -354,6 +355,7 @@ app.get('/api/check-geo', (req, res) => {
 // --- LANCEMENT DU CRON JOB ---
 // ======================================================
 initCleanupJob(); // <--- C'est cette ligne qui active le nettoyage automatique
+initDatabase(); // <--- Initialisation et seeding de la BDD
 
 // --- DÃ‰MARRAGE DU SERVEUR ---
 const PORT = process.env.PORT || process.env.API_PORT || 5000;
