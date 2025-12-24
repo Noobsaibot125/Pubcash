@@ -17,7 +17,7 @@ const pool = require('./src/config/db');
 const publicRoutes = require('./src/routes/publicRoutes');
 // --- AJOUT : Import du service de nettoyage ---
 const initCleanupJob = require('./src/services/cleanupService');
-const initDatabase = require('./src/services/dbInitService');
+const { initDatabase } = require('./src/models'); // <--- Import from models index
 const geoMiddleware = require('./src/middlewares/geoMiddleware');
 const maintenanceMiddleware = require('./src/middlewares/maintenanceMiddleware');
 const settingsRoutes = require('./src/routes/settingsRoutes');
@@ -355,7 +355,7 @@ app.get('/api/check-geo', (req, res) => {
 // --- LANCEMENT DU CRON JOB ---
 // ======================================================
 initCleanupJob(); // <--- C'est cette ligne qui active le nettoyage automatique
-initDatabase(); // <--- Initialisation et seeding de la BDD
+initDatabase(); // <--- Initialisation et seeding de la BDD via les Modèles MVC
 
 // --- DÃ‰MARRAGE DU SERVEUR ---
 const PORT = process.env.PORT || process.env.API_PORT || 5000;

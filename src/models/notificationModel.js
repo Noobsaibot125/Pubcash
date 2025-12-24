@@ -11,7 +11,7 @@ exports.createNotification = async (utilisateurId, type, titre, contenu, donnees
     // On s'assure d'utiliser id_utilisateur ou utilisateur_id selon ta BDD. 
     // Par sécurité, vérifie le nom de ta colonne dans phpMyAdmin.
     // Ici j'utilise 'id_utilisateur' qui est le standard de ton projet.
-    
+
     // Si ta colonne s'appelle 'utilisateur_id', change juste le nom dans la requête ci-dessous.
     const [result] = await pool.execute(
         `INSERT INTO notifications (id_utilisateur, type, titre, contenu, donnees, date_creation, lu) 
@@ -124,9 +124,29 @@ exports.deleteOldNotifications = async () => {
 exports.deleteAllNotifications = async (utilisateurId) => {
     // ⚠️ CORRECTION 1 : On utilise 'pool' (importé en haut), pas 'db' qui n'existe pas.
     // ⚠️ CORRECTION 2 : On utilise 'id_utilisateur' pour être cohérent avec tes autres fonctions (getUserNotifications, etc.).
-    
+
     await pool.execute(
         'DELETE FROM notifications WHERE id_utilisateur = ?',
         [utilisateurId]
     );
+};
+
+exports.createTable = async () => {
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS notifications (
+          id int NOT NULL AUTO_INCREMENT,
+          id_utilisateur int DEFAULT NULL,
+          type varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+          titre varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+          contenu text COLLATE utf8mb4_unicode_ci NOT NULL,
+          donnees json DEFAULT NULL,
+          lu tinyint(1) DEFAULT '0',
+          date_creation timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (id),
+          KEY idx_utilisateur_date (id_utilisateur,date_creation DESC),
+          KEY idx_non_lues (id_utilisateur,lu),
+          CONSTRAINT notifications_ibfk_1 FOREIGN KEY (id_utilisateur) REFERENCES utilisateurs (id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Historique des notifications push et in-app pour les utilisateurs';
+    `);
+    console.log('✅ Table notifications checked/created.');
 };

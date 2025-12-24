@@ -28,15 +28,15 @@ exports.getPoints = async (req, res) => {
             LEFT JOIN daily_activity da ON u.id = da.user_id AND da.date = ?
             WHERE u.id = ?
         `;
-        
+
         const [rows] = await pool.execute(query, [today, userId]);
 
         if (rows.length === 0) return res.status(404).json({ message: 'Utilisateur non trouvé' });
 
         // On renvoie les points ET le booléen (converti en true/false)
-        res.status(200).json({ 
+        res.status(200).json({
             points: rows[0].points,
-            wheel_spun: !!rows[0].wheel_spun 
+            wheel_spun: !!rows[0].wheel_spun
         });
 
     } catch (error) {
@@ -171,12 +171,12 @@ exports.submitPuzzle = async (req, res) => {
             `Félicitations pour votre victoire !`,
             { points, game_id: gameId, game_type: 'puzzle' }
         ).catch(err => console.error('Erreur notification puzzle (background):', err));
-        
+
         // ---------------------------------
 
         await connection.commit();
         delete puzzleSessions[userId];
-        
+
         // La réponse partira beaucoup plus vite maintenant
         res.status(200).json({ success: true, points, message: 'Félicitations !' });
 
@@ -304,8 +304,13 @@ exports.getGames = async (req, res) => {
 
         // Filtrage par commune (si utilisateur)
         if (req.user.role === 'utilisateur') {
-             query += ' AND (ciblage_commune = "toutes" OR ciblage_commune = ?)';
-             params.push(userCommune);
+            // Si l'utilisateur n'a pas de commune (cas social login incomplet), on ne montre que les jeux "toutes"
+            if (!userCommune) {
+                query += ' AND ciblage_commune = "toutes"';
+            } else {
+                query += ' AND (ciblage_commune = "toutes" OR ciblage_commune = ?)';
+                params.push(userCommune);
+            }
         }
 
         const [games] = await pool.execute(query, params);
@@ -314,7 +319,7 @@ exports.getGames = async (req, res) => {
         let wonGameIds = [];
         if (req.user.role === 'utilisateur') {
             const today = new Date().toISOString().split('T')[0];
-            
+
             // On regarde dans l'historique les victoires de ce jour
             const [wonGames] = await pool.execute(
                 `SELECT DISTINCT game_id 
@@ -329,7 +334,7 @@ exports.getGames = async (req, res) => {
 
         // 3. Construction de la réponse avec l'indicateur 'deja_joue'
         const baseUrl = `${req.protocol}://${req.get('host')}`;
-        
+
         const gamesWithStatus = games.map(game => ({
             ...game,
             image_url: game.image_url && !game.image_url.startsWith('http')
@@ -357,7 +362,7 @@ exports.deletepuzzle = async (req, res) => {
         console.error('Erreur deletepuzzle:', error);
         res.status(500).json({ message: 'Erreur serveur' });
     }
-    
+
 };
 exports.getQuizStatsByPromotion = async (req, res) => {
     const { promotionId } = req.params;
@@ -365,7 +370,7 @@ exports.getQuizStatsByPromotion = async (req, res) => {
     try {
         // 1. Trouver le jeu associé à la promotion
         const [games] = await pool.execute(
-            'SELECT id, type, titre FROM games WHERE promotion_id = ?', 
+            'SELECT id, type, titre FROM games WHERE promotion_id = ?',
             [promotionId]
         );
 
