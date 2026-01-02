@@ -145,7 +145,7 @@ exports.sauvegarderToken = async (req, res) => {
 
         // Appel au service
         await notificationService.sauvegarderTokenFCM(utilisateurId, token);
-        
+
         console.log(`✅ [BACKEND] Token sauvegardé avec succès pour User ${utilisateurId}`);
 
         res.json({ success: true, message: 'Token FCM sauvegardé' });
@@ -202,6 +202,72 @@ exports.supprimerToutesNotifications = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Erreur lors de la suppression totale',
+        });
+    }
+};
+
+/**
+ * Envoyer une notification admin manuelle (Ciblé ou Aléatoire)
+ */
+exports.sendAdminNotification = async (req, res) => {
+    try {
+        const { titre, contenu, target_type, target_value } = req.body;
+        // target_type: 'specific' (array of IDs) | 'random' (number) | 'single' (one ID)
+        // target_value: [1, 2] | 50 | 1
+
+        if (!titre || !contenu) {
+            return res.status(400).json({ success: false, message: 'Titre et contenu requis' });
+        }
+
+        let userIds = [];
+
+        if (target_type === 'specific') {
+            if (!Array.isArray(target_value)) {
+                return res.status(400).json({ success: false, message: 'Pour "specific", target_value doit être un tableau d\'IDs.' });
+            }
+            userIds = target_value;
+        }
+        else if (target_type === 'single') {
+            userIds = [target_value];
+        }
+        else if (target_type === 'random') {
+            const count = parseInt(target_value);
+            if (isNaN(count) || count <= 0) {
+                return res.status(400).json({ success: false, message: 'Nombre invalide pour l\'envoi aléatoire.' });
+            }
+            userIds = await notificationService.getRandomUsers(count);
+        } else {
+            return res.status(400).json({ success: false, message: 'Type de cible invalide.' });
+        }
+
+        if (userIds.length === 0) {
+            return res.json({ success: true, message: 'Aucun utilisateur cible trouvé.' });
+        }
+
+        console.log(`📢 Envoi notification Admin à ${userIds.length} utilisateurs.`);
+
+        // CORRECTION: Préfixer le titre avec "PubCash"
+        const formattedTitle = `PubCash : ${titre}`;
+
+        // Envoi en masse
+        await notificationService.envoyerNotificationMultiple(
+            userIds,
+            'admin_message', // Type spécial
+            formattedTitle,
+            contenu,
+            { is_admin_message: 'true' }
+        );
+
+        res.json({
+            success: true,
+            message: `Messages envoyés à ${userIds.length} utilisateurs.`,
+        });
+
+    } catch (error) {
+        console.error('Erreur sendAdminNotification:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Erreur serveur lors de l\'envoi.',
         });
     }
 };

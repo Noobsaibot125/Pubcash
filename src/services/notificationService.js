@@ -57,6 +57,8 @@ const envoyerNotificationPush = async (token, titre, contenu, donnees = {}) => {
             notification: {
                 title: titre,
                 body: contenu,
+                // Logo PubCash
+                image: 'https://pub-cash.com/uploads/landing/pub_cash.png'
             },
             data: {
                 ...donnees,
@@ -67,8 +69,8 @@ const envoyerNotificationPush = async (token, titre, contenu, donnees = {}) => {
                 notification: {
                     sound: 'default',
                     // 👇 MODIFICATION 1 : Mettre v3 comme dans l'appli Flutter
-                    channelId: 'pubcash_notifications_v3', 
-                    
+                    channelId: 'pubcash_notifications_v3',
+
                     // 👇 MODIFICATION 2 : Ajouter la couleur Orange
                     color: '#FF8C42',
                 },
@@ -189,13 +191,13 @@ exports.notifierNouvellePromotion = async (promotionId, titrePromo, ciblageCommu
             AND push_notification IS NOT NULL
             AND push_notification != ''
         `;
-        
+
         const params = [];
 
         // 1. FILTRE COMMUNE (CORRIGÉ AVEC LOWER)
         if (ciblageCommune && ciblageCommune !== 'toutes' && ciblageCommune !== 'toutes_communes') {
             // On force la comparaison en minuscule des deux côtés pour éviter les erreurs "Abobo" vs "abobo"
-            sql += ` AND LOWER(commune_choisie) = LOWER(?)`; 
+            sql += ` AND LOWER(commune_choisie) = LOWER(?)`;
             params.push(ciblageCommune);
         }
 
@@ -209,7 +211,7 @@ exports.notifierNouvellePromotion = async (promotionId, titrePromo, ciblageCommu
         }
 
         const [users] = await pool.execute(sql, params);
-        
+
         if (users.length === 0) {
             console.log(`ℹ️ Aucun utilisateur trouvé pour ${ciblageCommune} (ou pas de token).`);
             return;
@@ -223,7 +225,7 @@ exports.notifierNouvellePromotion = async (promotionId, titrePromo, ciblageCommu
             'nouvelle_promo',
             'Nouvelle Vidéo Disponible ! 🎥',
             `Une promotion a été créée pour votre commune ! Regardez "${titrePromo}" maintenant.`,
-            { 
+            {
                 promotion_id: promotionId.toString(),
                 screen: 'home'
             }
@@ -231,5 +233,24 @@ exports.notifierNouvellePromotion = async (promotionId, titrePromo, ciblageCommu
 
     } catch (error) {
         console.error('❌ Erreur critique notifierNouvellePromotion:', error);
+    }
+};
+
+/**
+ * Récupérer des utilisateurs aléatoires
+ */
+exports.getRandomUsers = async (count) => {
+    try {
+        // CORRECTION: LIMIT ? pose problème avec certains binding MySQL/Node.
+        // On sécurise en forçant un entier et en l'injectant directement.
+        const safeCount = parseInt(count) || 10;
+
+        const [rows] = await pool.execute(
+            `SELECT id FROM utilisateurs WHERE est_actif = TRUE ORDER BY RAND() LIMIT ${safeCount}`
+        );
+        return rows.map(row => row.id);
+    } catch (error) {
+        console.error('❌ Erreur getRandomUsers:', error);
+        return [];
     }
 };

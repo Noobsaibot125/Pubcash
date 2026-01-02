@@ -13,6 +13,9 @@ router.get('/non-lues/count', notificationController.getNombreNonLues);
 router.patch('/:id/lire', notificationController.marquerCommeLue);
 router.patch('/lire-toutes', notificationController.marquerToutesCommeLues);
 
+// Route Admin pour envoyer des messages
+router.post('/admin/send', notificationController.sendAdminNotification);
+
 // 👇👇👇 MODIFICATION ICI : '/toutes' DOIT ÊTRE EN PREMIER 👇👇👇
 router.delete('/toutes', notificationController.supprimerToutesNotifications);
 
