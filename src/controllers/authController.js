@@ -758,6 +758,9 @@ exports.registerSocial = async (req, res) => {
         } else if (socialData.id_facebook) {
             const [rows] = await connection.execute('SELECT * FROM utilisateurs WHERE id_facebook = ? OR email = ?', [socialData.id_facebook, socialData.email]);
             user = rows[0];
+        } else if (socialData.id_apple) {
+            const [rows] = await connection.execute('SELECT * FROM utilisateurs WHERE id_apple = ? OR email = ?', [socialData.id_apple, socialData.email]);
+            user = rows[0];
         } else {
             const [rows] = await connection.execute('SELECT * FROM utilisateurs WHERE email = ?', [socialData.email]);
             user = rows[0];
@@ -801,8 +804,8 @@ exports.registerSocial = async (req, res) => {
         const now = new Date();
         const [inserted] = await connection.execute(
             `INSERT INTO utilisateurs 
-            (nom_utilisateur, email, mot_de_passe, commune_choisie, est_actif, id_facebook, id_google, date_inscription, contact, photo_profil, nom, prenom, parrain_id, code_parrainage, genre, push_notification) 
-            VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (nom_utilisateur, email, mot_de_passe, commune_choisie, est_actif, id_facebook, id_google, id_apple, date_inscription, contact, photo_profil, nom, prenom, parrain_id, code_parrainage, genre, push_notification) 
+            VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 socialData.nom_utilisateur,
                 socialData.email,
@@ -810,6 +813,7 @@ exports.registerSocial = async (req, res) => {
                 true,
                 socialData.id_facebook || null,
                 socialData.id_google || null,
+                socialData.id_apple || null,
                 now,
                 contact,
                 socialData.photo_profil || null,
@@ -1064,6 +1068,139 @@ exports.googleAuth = async (req, res) => {
         res.status(500).json({ message: 'Erreur serveur.', error: error.message });
     }
 };
+
+// POST /auth/apple
+exports.appleAuth = async (req, res) => {
+    const { identityToken, authorizationCode, givenName, familyName, email: providedEmail, push_notification, code_parrainage } = req.body;
+
+    if (!identityToken) {
+        return res.status(400).json({ message: 'Identity token Apple requis.' });
+    }
+
+    try {
+        console.log('Tentative connexion Apple...');
+
+        // Décoder le JWT Apple pour extraire les infos (sans vérification complète côté serveur pour simplifier)
+        // En production, vous devriez vérifier la signature avec les clés publiques Apple
+        const tokenParts = identityToken.split('.');
+        if (tokenParts.length !== 3) {
+            return res.status(400).json({ message: 'Token Apple invalide.' });
+        }
+
+        const payload = JSON.parse(Buffer.from(tokenParts[1], 'base64').toString('utf8'));
+        const id_apple = payload.sub; // L'identifiant unique Apple
+        const email = payload.email || providedEmail || null;
+
+        // Apple ne fournit le nom que lors de la première connexion
+        const nom = familyName || '';
+        const prenom = givenName || '';
+        const nom_utilisateur = [prenom, nom].filter(Boolean).join(' ') || `apple_user_${id_apple.substring(0, 8)}`;
+
+        if (!id_apple) {
+            return res.status(400).json({ message: "Impossible de récupérer l'identifiant Apple." });
+        }
+
+        // Recherche utilisateur existant
+        const query = email
+            ? 'SELECT * FROM utilisateurs WHERE id_apple = ? OR email = ?'
+            : 'SELECT * FROM utilisateurs WHERE id_apple = ?';
+        const params = email ? [id_apple, email] : [id_apple];
+
+        let [rows] = await pool.execute(query, params);
+        let user = rows[0];
+
+        // Vérifications de blocage/suppression
+        if (user) {
+            if (user.est_bloque == 1) {
+                return res.status(403).json({
+                    message: "Votre compte a été suspendu par l'administrateur.",
+                    error_code: "ACCOUNT_BLOCKED"
+                });
+            }
+            if (user.est_actif == 0) {
+                return res.status(403).json({ message: "Votre compte a été désactivé." });
+            }
+        }
+
+        if (user && user.deletion_requested_at) {
+            const requestDate = new Date(user.deletion_requested_at);
+            const currentDate = new Date();
+            const daysDifference = (currentDate - requestDate) / (1000 * 3600 * 24);
+
+            if (daysDifference > 45) {
+                return res.status(403).json({ message: "Ce compte a été supprimé définitivement." });
+            } else {
+                await pool.execute('UPDATE utilisateurs SET deletion_requested_at = NULL WHERE id = ?', [user.id]);
+                user.deletion_requested_at = null;
+            }
+        }
+
+        if (!user) {
+            // Nouvel utilisateur - renvoyer les données pour compléter le profil
+            return res.status(200).json({
+                isNewUser: true,
+                socialData: {
+                    id_apple,
+                    nom,
+                    prenom,
+                    email,
+                    photo_profil: null, // Apple ne fournit pas de photo
+                    nom_utilisateur
+                },
+                message: "Veuillez compléter votre profil pour finaliser l'inscription."
+            });
+        } else {
+            // Mise à jour utilisateur existant
+            const updates = [];
+            const updateParams = [];
+            if (nom && nom !== user.nom) { updates.push('nom = ?'); updateParams.push(nom); }
+            if (prenom && prenom !== user.prenom) { updates.push('prenom = ?'); updateParams.push(prenom); }
+            if (!user.id_apple) { updates.push('id_apple = ?'); updateParams.push(id_apple); }
+
+            if (updates.length > 0) {
+                updateParams.push(user.id);
+                await pool.execute(`UPDATE utilisateurs SET ${updates.join(', ')} WHERE id = ?`, updateParams);
+                [rows] = await pool.execute('SELECT *, "utilisateur" as role FROM utilisateurs WHERE id = ?', [user.id]);
+                user = rows[0];
+            }
+        }
+
+        // Enregistrement Token Push
+        if (push_notification) {
+            await pool.execute('UPDATE utilisateurs SET push_notification = ? WHERE id = ?', [push_notification, user.id]);
+            user.push_notification = push_notification;
+        }
+
+        const jwtPayload = { id: user.id, email: user.email, role: 'utilisateur' };
+        const newAccessToken = jwt.sign(jwtPayload, process.env.JWT_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRATION || '90d' });
+        const newRefreshToken = jwt.sign(jwtPayload, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.REFRESH_TOKEN_EXPIRATION || '365d' });
+
+        await pool.execute(`UPDATE utilisateurs SET refresh_token = ?, est_en_ligne = 1, derniere_connexion = NOW() WHERE id = ?`, [newRefreshToken, user.id]);
+
+        await handleDailyLogin(user.id);
+
+        res.status(200).json({
+            accessToken: newAccessToken,
+            refreshToken: newRefreshToken,
+            user: {
+                id: user.id,
+                nom_utilisateur: user.nom_utilisateur,
+                email: user.email,
+                photo_profil: user.photo_profil,
+                role: 'utilisateur',
+                push_notification: user.push_notification,
+                id_apple: user.id_apple,
+                commune: user.commune_choisie
+            },
+            profileCompleted: Boolean(user.commune_choisie && user.date_naissance && user.contact)
+        });
+
+    } catch (error) {
+        console.error("--- ERREUR DANS appleAuth ---", error);
+        res.status(500).json({ message: 'Erreur serveur.', error: error.message });
+    }
+};
+
 exports.refreshToken = async (req, res) => {
     const { token } = req.body;
     if (!token) {

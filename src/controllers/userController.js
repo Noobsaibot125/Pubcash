@@ -16,7 +16,7 @@ exports.getProfileForUser = async (req, res) => {
           id, nom, prenom, nom_utilisateur, email, contact, 
           commune_choisie, date_naissance, photo_profil, image_background,
           code_parrainage, points, remuneration_utilisateur,
-          id_google, id_facebook
+          id_google, id_facebook, id_apple
        FROM utilisateurs 
        WHERE id = ?`,
       [userId]
@@ -99,7 +99,7 @@ exports.updateProfileForUser = async (req, res) => {
     // 2. Récupérer l'utilisateur pour vérifier son type (Social ou Classique)
     // On récupère aussi id_google et id_facebook pour savoir si c'est un compte social
     const [rows] = await pool.execute(
-      'SELECT mot_de_passe, id_google, id_facebook FROM utilisateurs WHERE id = ?',
+      'SELECT mot_de_passe, id_google, id_facebook, id_apple FROM utilisateurs WHERE id = ?',
       [userId]
     );
 
@@ -109,7 +109,7 @@ exports.updateProfileForUser = async (req, res) => {
     const user = rows[0];
 
     // --- LOGIQUE DE SÉCURITÉ INTELLIGENTE ---
-    const isSocialUser = user.id_google || user.id_facebook;
+    const isSocialUser = user.id_google || user.id_facebook || user.id_apple;
     const hasPassword = user.mot_de_passe && user.mot_de_passe.length > 0;
 
     // Si l'utilisateur n'est PAS social (donc il a un mot de passe), on DOIT vérifier

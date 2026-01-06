@@ -30,6 +30,7 @@ class UserModel {
             updated_at timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             ville varchar(100) DEFAULT NULL,
             id_google varchar(255) DEFAULT NULL,
+            id_apple varchar(255) DEFAULT NULL,
             reset_code varchar(6) DEFAULT NULL,
             reset_code_expiration datetime DEFAULT NULL,
             points int DEFAULT '0',
@@ -42,6 +43,7 @@ class UserModel {
             UNIQUE KEY nom_utilisateur (nom_utilisateur),
             UNIQUE KEY email (email),
             UNIQUE KEY idx_id_google (id_google),
+            UNIQUE KEY idx_id_apple (id_apple),
             UNIQUE KEY code_parrainage (code_parrainage),
             KEY parrain_id (parrain_id),
             CONSTRAINT utilisateurs_ibfk_1 FOREIGN KEY (parrain_id) REFERENCES utilisateurs (id) ON DELETE SET NULL

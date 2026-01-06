@@ -19,6 +19,7 @@ router.post('/verify-otp', authController.verifyOtp);
 router.post('/utilisateur/register', authController.registerUtilisateur);
 router.post('/facebook', authController.facebookAuth);
 router.post('/google', authController.googleAuth);
+router.post('/apple', authController.appleAuth);
 router.post('/social/register', authController.registerSocial);
 router.patch('/utilisateur/complete-profile', authController.completeFacebookProfile);
 router.post('/refresh-token', authController.refreshToken);
