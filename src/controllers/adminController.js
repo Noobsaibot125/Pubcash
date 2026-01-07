@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 const axios = require('axios'); // <--- AJOUTER CECI
 const notificationService = require('../services/notificationService');
+const emailService = require('../services/emailService');
 const BASE_URL = process.env.NODE_ENV === 'production'
   ? process.env.PRODUCTION_URL
   : process.env.DEVELOPMENT_URL || `http://${process.env.HOST || 'localhost'}:${process.env.PORT || 5000}`;
@@ -882,7 +883,22 @@ exports.verifyAdminRecharge = async (req, res) => {
         // CRÉDITER ID=2
         await connection.execute('UPDATE portefeuille_admin SET solde = solde + ? WHERE id = 2', [Number(tx.montant)]);
 
+        // Récupérer le nouveau solde pour l'email
+        const [newBalanceRows] = await connection.execute('SELECT solde FROM portefeuille_admin WHERE id = 2');
+        const newBalance = newBalanceRows.length > 0 ? newBalanceRows[0].solde : Number(tx.montant);
+
         await connection.commit();
+
+        // Envoyer l'email de confirmation à l'admin
+        try {
+          const [adminData] = await pool.execute('SELECT nom_utilisateur, email FROM administrateurs WHERE id = ?', [adminId]);
+          if (adminData.length > 0) {
+            emailService.sendAdminRechargeSuccessEmail(adminData[0], transaction_id, tx.montant, newBalance);
+          }
+        } catch (emailErr) {
+          console.error('Erreur envoi email admin:', emailErr);
+        }
+
         return res.status(200).json({ message: 'Rechargement validé.' });
       } catch (err) {
         await connection.rollback();
