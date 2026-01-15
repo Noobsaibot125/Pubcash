@@ -254,7 +254,7 @@ exports.createPromotion = async (req, res) => {
         const thumbUrl = thumbnail_url && !thumbnail_url.startsWith('http')
           ? `${baseUrl}/uploads/thumbnails/${encodeURIComponent(thumbnail_url)}`
           : thumbnail_url;
-        const [clientInfo] = await connection.execute(
+        const [clientInfo] = await pool.execute(
           'SELECT nom, prenom, nom_utilisateur FROM clients WHERE id = ?',
           [clientId]
         );
@@ -750,9 +750,8 @@ exports.cinetpayNotify = async (req, res) => {
     // Récupérer l'enregistrement local
     const [txRows] = await pool.execute('SELECT * FROM cinetpay_transactions WHERE transaction_id = ?', [transactionId]);
     if (txRows.length === 0) {
-      console.warn('Webhook: transaction non trouvée en base:', transactionId);
-      // Optionnel : insérer la transaction inconnue pour suivi
-      await pool.execute('INSERT IGNORE INTO cinetpay_transactions (transaction_id, client_id, amount, status) VALUES (?, ?, ?, ?)', [transactionId, 0, 0, status || 'UNKNOWN']);
+      console.warn('Webhook: transaction inconnue reçue, ignorée:', transactionId);
+      // On ne pollue pas la BDD avec des données corrompues (client_id=0)
       // On répond OK pour que CinetPay arrête de retry
       return res.status(200).send('OK');
     }

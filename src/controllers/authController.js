@@ -1041,7 +1041,7 @@ exports.googleAuth = async (req, res) => {
 
         const payload = { id: user.id, email: user.email, role: 'utilisateur' };
         const newAccessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRATION || '90d' });
-        const newRefreshToken = jwt.sign(payload, process.env.REFRESH_TOKEN_EXPIRATION || '365d');
+        const newRefreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.REFRESH_TOKEN_EXPIRATION || '365d' });
 
         await pool.execute(`UPDATE utilisateurs SET refresh_token = ?, est_en_ligne = 1, derniere_connexion = NOW() WHERE id = ?`, [newRefreshToken, user.id]);
 
@@ -1723,110 +1723,5 @@ exports.requestUserDeletion = async (req, res) => {
     }
 };
 
-// POST /auth/register-social
-exports.registerSocial = async (req, res) => {
-    const {
-        socialData,
-        commune_choisie,
-        date_naissance,
-        contact,
-        genre,
-        code_parrainage,
-        push_notification
-    } = req.body;
 
-    if (!socialData || !commune_choisie || !date_naissance || !contact) {
-        return res.status(400).json({ message: "Données incomplètes pour l'inscription." });
-    }
-
-    const { id_google, id_facebook, email, nom, prenom, photo_profil, nom_utilisateur } = socialData;
-
-    const connection = await pool.getConnection();
-
-    try {
-        await connection.beginTransaction();
-
-        // 1. Vérifier si l'utilisateur existe déjà (sécurité)
-        const queryCheck = email
-            ? 'SELECT id FROM utilisateurs WHERE (id_google = ? AND id_google IS NOT NULL) OR (id_facebook = ? AND id_facebook IS NOT NULL) OR email = ? OR contact = ?'
-            : 'SELECT id FROM utilisateurs WHERE (id_google = ? AND id_google IS NOT NULL) OR (id_facebook = ? AND id_facebook IS NOT NULL) OR contact = ?';
-
-        const paramsCheck = email ? [id_google || null, id_facebook || null, email, contact] : [id_google || null, id_facebook || null, contact];
-
-        const [existing] = await connection.execute(queryCheck, paramsCheck);
-        if (existing.length > 0) {
-            await connection.rollback();
-            return res.status(409).json({ message: "Un utilisateur avec cet email ou ce contact existe déjà." });
-        }
-
-        // 2. Parrainage
-        let parrainId = null;
-        if (code_parrainage && code_parrainage.trim() !== '') {
-            const [parrains] = await connection.execute('SELECT id FROM utilisateurs WHERE code_parrainage = ?', [code_parrainage]);
-            if (parrains.length > 0) {
-                parrainId = parrains[0].id;
-                await connection.execute('UPDATE utilisateurs SET points = COALESCE(points, 0) + 30 WHERE id = ?', [parrainId]);
-                await connection.execute('INSERT INTO game_history (user_id, points_gagnes, resultat, created_at) VALUES (?, ?, ?, NOW())', [parrainId, 30, 'bonus_parrainage_social']);
-            }
-        }
-
-        // 3. Insertion
-        const myReferralCode = generateReferralCode(nom_utilisateur);
-        const [result] = await connection.execute(
-            `INSERT INTO utilisateurs 
-            (nom_utilisateur, email, mot_de_passe, ville, commune_choisie, est_actif, id_google, id_facebook, 
-            date_inscription, contact, photo_profil, nom, prenom, parrain_id, code_parrainage, date_naissance, genre, push_notification, created_at) 
-            VALUES (?, ?, NULL, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-            [
-                nom_utilisateur,
-                email || null,
-                '', // ville vide par défaut ou transmise? 
-                commune_choisie,
-                true,
-                id_google || null,
-                id_facebook || null,
-                contact,
-                photo_profil || null,
-                nom || null,
-                prenom || null,
-                parrainId,
-                myReferralCode,
-                date_naissance,
-                genre || null,
-                push_notification || null
-            ]
-        );
-
-        const userId = result.insertId;
-        await connection.commit();
-
-        // 4. Génération des tokens
-        const payload = { id: userId, email: email, role: 'utilisateur' };
-        const accessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.ACCESS_TOKEN_EXPIRATION || '90d' });
-        const refreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.REFRESH_TOKEN_EXPIRATION || '365d' });
-
-        await pool.execute(`UPDATE utilisateurs SET refresh_token = ?, est_en_ligne = 1, derniere_connexion = NOW() WHERE id = ?`, [refreshToken, userId]);
-
-        res.status(201).json({
-            message: "Inscription sociale réussie.",
-            accessToken,
-            refreshToken,
-            user: {
-                id: userId,
-                nom_utilisateur,
-                email,
-                photo_profil,
-                role: 'utilisateur',
-                commune: commune_choisie
-            },
-            profileCompleted: true
-        });
-
-    } catch (error) {
-        await connection.rollback();
-        console.error("Erreur registerSocial:", error);
-        res.status(500).json({ message: "Erreur serveur lors de l'inscription sociale." });
-    } finally {
-        connection.release();
-    }
-};
+// Note: registerSocial est défini plus haut (ligne ~742) avec support complet pour Google, Facebook ET Apple

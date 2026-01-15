@@ -3,13 +3,14 @@ const { v4: uuidv4 } = require('uuid');
 const notificationService = require('../services/notificationService');
 // --- UTILITAIRES ---
 
-// Pondération pour la roue
+// Pondération pour la roue (Ajusté le 15/01/2026 - Plus généreux)
 const spinWheelLogic = () => {
     const rand = Math.random() * 100; // 0 à 100
-    if (rand < 60) return { type: 'perdu', points: 0, label: 'Perdu' }; // 60%
-    if (rand < 80) return { type: 'gagne', points: 1, label: '1 Point' }; // 20%
-    if (rand < 95) return { type: 'gagne', points: 2, label: '2 Points' }; // 15%
-    return { type: 'gagne', points: 5, label: '5 Points' }; // 5%
+    // Distribution plus équilibrée pour améliorer l'expérience utilisateur
+    if (rand < 40) return { type: 'perdu', points: 0, label: 'Perdu' };      // 40% (était 60%)
+    if (rand < 70) return { type: 'gagne', points: 1, label: '1 Point' };    // 30% (était 20%)
+    if (rand < 90) return { type: 'gagne', points: 2, label: '2 Points' };   // 20% (était 15%)
+    return { type: 'gagne', points: 5, label: '5 Points' };                  // 10% (était 5%)
 };
 
 // --- CONTROLLERS ---
@@ -110,82 +111,135 @@ exports.spinWheel = async (req, res) => {
     }
 };
 
-// Stockage temporaire des sessions de puzzle (en mémoire pour simplifier, ou Redis idéalement)
-// Format: { userId: { gameId, startTime } }
-const puzzleSessions = {};
+// ============================================================================
+// 🔴 CRITICAL FIX: Migration des sessions puzzle de la RAM vers la BDD
+// Les sessions survivent maintenant aux redémarrages du serveur (PM2)
+// ============================================================================
+
+// Création automatique de la table si elle n'existe pas
+const ensurePuzzleSessionsTable = async () => {
+    try {
+        await pool.execute(`
+            CREATE TABLE IF NOT EXISTS puzzle_sessions (
+                user_id INT PRIMARY KEY,
+                game_id INT NOT NULL,
+                start_time BIGINT NOT NULL,
+                duration_limit INT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_created (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        `);
+    } catch (err) {
+        console.warn('Table puzzle_sessions déjà existante ou erreur création:', err.message);
+    }
+};
+
+// Appeler au démarrage
+ensurePuzzleSessionsTable();
+
+// Nettoyage des sessions expirées (plus de 10 minutes)
+const cleanupExpiredSessions = async () => {
+    try {
+        await pool.execute(
+            'DELETE FROM puzzle_sessions WHERE created_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE)'
+        );
+    } catch (err) {
+        // Silently fail - non critical
+    }
+};
+
+// Nettoyage périodique toutes les 5 minutes
+setInterval(cleanupExpiredSessions, 5 * 60 * 1000);
 
 exports.startPuzzle = async (req, res) => {
     const { gameId } = req.body;
     const userId = req.user.id;
 
-    // Vérifier si le jeu existe
-    const [games] = await pool.execute('SELECT * FROM games WHERE id = ? AND type = "puzzle"', [gameId]);
-    if (games.length === 0) return res.status(404).json({ message: 'Puzzle non trouvé' });
+    try {
+        // Vérifier si le jeu existe
+        const [games] = await pool.execute('SELECT * FROM games WHERE id = ? AND type = "puzzle"', [gameId]);
+        if (games.length === 0) return res.status(404).json({ message: 'Puzzle non trouvé' });
 
-    puzzleSessions[userId] = {
-        gameId,
-        startTime: Date.now(),
-        durationLimit: games[0].duree_limite // en secondes
-    };
+        const startTime = Date.now();
+        const durationLimit = games[0].duree_limite;
 
-    res.status(200).json({ message: 'Puzzle démarré', startTime: puzzleSessions[userId].startTime });
+        // Insérer ou mettre à jour la session en BDD
+        await pool.execute(
+            `INSERT INTO puzzle_sessions (user_id, game_id, start_time, duration_limit, created_at) 
+             VALUES (?, ?, ?, ?, NOW())
+             ON DUPLICATE KEY UPDATE game_id = ?, start_time = ?, duration_limit = ?, created_at = NOW()`,
+            [userId, gameId, startTime, durationLimit, gameId, startTime, durationLimit]
+        );
+
+        res.status(200).json({ message: 'Puzzle démarré', startTime });
+    } catch (error) {
+        console.error('Erreur startPuzzle:', error);
+        res.status(500).json({ message: 'Erreur serveur' });
+    }
 };
 
 exports.submitPuzzle = async (req, res) => {
     const { gameId } = req.body;
     const userId = req.user.id;
-    const session = puzzleSessions[userId];
 
-    if (!session || session.gameId !== gameId) {
-        return res.status(400).json({ message: 'Aucune session de jeu active pour ce puzzle.' });
-    }
-
-    const endTime = Date.now();
-    const duration = (endTime - session.startTime) / 1000;
-
-    if (duration > session.durationLimit + 2) {
-        delete puzzleSessions[userId];
-        return res.status(200).json({ success: false, message: 'Temps écoulé !' });
-    }
-
-    const connection = await pool.getConnection();
     try {
-        await connection.beginTransaction();
-
-        // J'ai ajouté `titre` dans le SELECT pour la notification
-        const [gameRows] = await connection.execute('SELECT titre, points_recompense FROM games WHERE id = ?', [gameId]);
-        const game = gameRows[0];
-        const points = game.points_recompense;
-
-        await connection.execute('UPDATE utilisateurs SET points = points + ? WHERE id = ?', [points, userId]);
-        await connection.execute(
-            'INSERT INTO game_history (user_id, game_id, points_gagnes, resultat) VALUES (?, ?, ?, ?)',
-            [userId, gameId, points, 'gagne']
+        // Récupérer la session depuis la BDD
+        const [sessions] = await pool.execute(
+            'SELECT * FROM puzzle_sessions WHERE user_id = ? AND game_id = ?',
+            [userId, gameId]
         );
 
-        // --- AJOUT NOTIFICATION PUZZLE ---
-        notificationService.envoyerNotification(
-            userId,
-            'jeu_gagne',
-            `${game.titre || 'Puzzle'}, Vous avez reçu ${points} pts`,
-            `Félicitations pour votre victoire !`,
-            { points, game_id: gameId, game_type: 'puzzle' }
-        ).catch(err => console.error('Erreur notification puzzle (background):', err));
+        if (sessions.length === 0) {
+            return res.status(400).json({ message: 'Aucune session de jeu active pour ce puzzle.' });
+        }
 
-        // ---------------------------------
+        const session = sessions[0];
+        const endTime = Date.now();
+        const duration = (endTime - session.start_time) / 1000;
 
-        await connection.commit();
-        delete puzzleSessions[userId];
+        // Supprimer la session (que ce soit gagné ou temps écoulé)
+        await pool.execute('DELETE FROM puzzle_sessions WHERE user_id = ?', [userId]);
 
-        // La réponse partira beaucoup plus vite maintenant
-        res.status(200).json({ success: true, points, message: 'Félicitations !' });
+        if (duration > session.duration_limit + 2) {
+            return res.status(200).json({ success: false, message: 'Temps écoulé !' });
+        }
 
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+
+            const [gameRows] = await connection.execute('SELECT titre, points_recompense FROM games WHERE id = ?', [gameId]);
+            const game = gameRows[0];
+            const points = game.points_recompense;
+
+            await connection.execute('UPDATE utilisateurs SET points = points + ? WHERE id = ?', [points, userId]);
+            await connection.execute(
+                'INSERT INTO game_history (user_id, game_id, points_gagnes, resultat) VALUES (?, ?, ?, ?)',
+                [userId, gameId, points, 'gagne']
+            );
+
+            // Notification en arrière-plan
+            notificationService.envoyerNotification(
+                userId,
+                'jeu_gagne',
+                `${game.titre || 'Puzzle'}, Vous avez reçu ${points} pts`,
+                `Félicitations pour votre victoire !`,
+                { points, game_id: gameId, game_type: 'puzzle' }
+            ).catch(err => console.error('Erreur notification puzzle (background):', err));
+
+            await connection.commit();
+            res.status(200).json({ success: true, points, message: 'Félicitations !' });
+
+        } catch (error) {
+            await connection.rollback();
+            console.error('Erreur submitPuzzle:', error);
+            res.status(500).json({ message: 'Erreur serveur' });
+        } finally {
+            connection.release();
+        }
     } catch (error) {
-        await connection.rollback();
         console.error('Erreur submitPuzzle:', error);
         res.status(500).json({ message: 'Erreur serveur' });
-    } finally {
-        connection.release();
     }
 };
 exports.submitQuiz = async (req, res) => {
