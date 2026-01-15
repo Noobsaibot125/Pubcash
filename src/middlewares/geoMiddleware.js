@@ -1,10 +1,15 @@
 const geoip = require('geoip-lite');
 
 /**
- * Middleware de restriction gÃ©ographique
  * Bloque l'accÃ¨s si l'IP de l'utilisateur n'est pas localisÃ©e en CÃ´te d'Ivoire (CI).
  */
 const geoMiddleware = (req, res, next) => {
+    // 0. Whitelist des routes critiques qui ne doivent JAMAIS Ãªtre bloquÃ©es par GeoIP
+    const allowedPrefixes = ['/api/settings', '/health', '/api/auth/login-admin'];
+    if (allowedPrefixes.some(prefix => req.path.startsWith(prefix))) {
+        return next();
+    }
+
     // 1. RÃ©cupÃ©rer l'IP du client
     // En prod derriÃ¨re un proxy (Nginx/Apache), l'IP rÃ©elle est souvent dans 'x-forwarded-for'
     // Express avec 'trust proxy' activÃ© remplit req.ip correctement
@@ -24,8 +29,8 @@ const geoMiddleware = (req, res, next) => {
     }
 
     // --- LOGGING POUR DEBUG (A VOIR DANS LES LOGS DU SERVEUR) ---
-   const geo = geoip.lookup(ip);
-    
+    const geo = geoip.lookup(ip);
+
     // CAS 1 : C'est confirmé comme étant la Côte d'Ivoire
     if (geo && geo.country === 'CI') {
         return next();

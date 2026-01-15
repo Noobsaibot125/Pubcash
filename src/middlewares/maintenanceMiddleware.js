@@ -2,14 +2,7 @@ const pool = require('../config/db');
 
 /**
  * Middleware de Maintenance
- * Vérifie dans la BDD si un mode maintenance est activé.
- * 
- * Logique:
- * - maintenance_mode (global) = bloque TOUT (Web + API)
- * - maintenance_api = bloque uniquement l'API (utilisateurs mobiles)
- * - maintenance_web = géré côté Frontend via GeoGuard (pas ici)
- * 
- * Ainsi, le mobile est impacté par: maintenance_mode OU maintenance_api
+ * Vérifie dans la BDD si le mode maintenance global est activé.
  */
 const maintenanceMiddleware = async (req, res, next) => {
     try {
@@ -28,29 +21,22 @@ const maintenanceMiddleware = async (req, res, next) => {
             return next();
         }
 
-        // Récupérer les deux settings pertinents pour le backend
+        // Récupérer le setting de maintenance globale
         const [rows] = await pool.execute(
-            'SELECT setting_key, setting_value FROM system_settings WHERE setting_key IN ("maintenance_mode", "maintenance_api")'
+            'SELECT setting_value FROM system_settings WHERE setting_key = "maintenance_mode"'
         );
 
-        let isGlobalMaintenance = false;
-        let isApiMaintenance = false;
+        let isMaintenance = false;
+        if (rows.length > 0) {
+            const val = rows[0].setting_value;
+            isMaintenance = val === true || val === 'true' || val === '1' || val === 1;
+        }
 
-        rows.forEach(row => {
-            if (row.setting_key === 'maintenance_mode') {
-                isGlobalMaintenance = row.setting_value === 'true';
-            } else if (row.setting_key === 'maintenance_api') {
-                isApiMaintenance = row.setting_value === 'true';
-            }
-        });
-
-        // Bloquer si maintenance globale OU maintenance API
-        if (isGlobalMaintenance || isApiMaintenance) {
+        if (isMaintenance) {
             return res.status(503).json({
                 error: 'Service Unavailable',
-                message: 'Le service est actuellement en maintenance. Veuillez revenir plus tard.',
-                maintenance: true,
-                type: isGlobalMaintenance ? 'global' : 'api'
+                message: 'Le site est actuellement en maintenance. Veuillez revenir plus tard.',
+                maintenance: true
             });
         }
 

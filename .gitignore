@@ -11,3 +11,5 @@ uploads/profile/*
 firebase_env_config.txt
 fix_ending.txt
 scripts/deploy_prod.py
+scripts/sync_db.js
+scripts/compare_and_sync.js
