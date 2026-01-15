@@ -314,7 +314,7 @@ exports.createGame = async (req, res) => {
         const finalImageUrl = image_url || null;
         const finalDuree = duree_limite || null;
 
-        await pool.execute(`
+        const [result] = await pool.execute(`
             INSERT INTO games (
                 type, titre, image_url, question, reponses, bonne_reponse, 
                 duree_limite, points_recompense, ciblage_commune, promotion_id, statut
@@ -333,6 +333,53 @@ exports.createGame = async (req, res) => {
             finalPromotionId,
             finalStatut
         ]);
+
+        // ============================================================
+        // NOUVELLE FONCTIONNALITÉ : Notification à tous les utilisateurs
+        // ============================================================
+        if (finalStatut === 'actif') {
+            try {
+                // Récupérer tous les utilisateurs actifs avec un token FCM
+                let userQuery = `
+                    SELECT id FROM utilisateurs 
+                    WHERE est_actif = 1 
+                    AND push_notification IS NOT NULL 
+                    AND push_notification != ''
+                `;
+
+                // Si ciblage par commune (pas "toutes")
+                if (finalCiblage !== 'toutes') {
+                    userQuery += ` AND commune_choisie = ?`;
+                }
+
+                const queryParams = finalCiblage !== 'toutes' ? [finalCiblage] : [];
+                const [users] = await pool.execute(userQuery, queryParams);
+
+                // Déterminer le type de jeu en français
+                const gameTypeLabel = type === 'puzzle' ? 'Puzzle' : 'Quiz';
+                const pointsLabel = points_recompense > 1 ? `${points_recompense} points` : '1 point';
+
+                // Envoyer la notification à chaque utilisateur (en arrière-plan)
+                for (const user of users) {
+                    notificationService.envoyerNotification(
+                        user.id,
+                        'nouveau_jeu',
+                        `🎮 Nouveau ${gameTypeLabel} disponible !`,
+                        `${titre} - Gagnez jusqu'à ${pointsLabel} en jouant maintenant !`,
+                        {
+                            game_id: result.insertId,
+                            game_type: type,
+                            points: points_recompense
+                        }
+                    ).catch(err => console.error(`Erreur notification user ${user.id}:`, err));
+                }
+
+                console.log(`✅ Notifications envoyées à ${users.length} utilisateurs pour le nouveau jeu "${titre}"`);
+            } catch (notifError) {
+                // Ne pas bloquer la création si les notifications échouent
+                console.error('Erreur lors de l\'envoi des notifications:', notifError);
+            }
+        }
 
         res.status(201).json({ message: 'Jeu créé avec succès' });
     } catch (error) {
