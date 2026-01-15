@@ -429,18 +429,30 @@ exports.deleteCommune = async (req, res) => {
   }
 };
 
-// --- SUPPRIMER UNE COMMUNE ---
-exports.deleteCommune = async (req, res) => {
-  const { id } = req.params;
+// --- SUPPRIMER TOUTES LES VILLES ET COMMUNES ---
+exports.clearAllCommunesAndVilles = async (req, res) => {
+  const connection = await pool.getConnection();
   try {
-    const [result] = await pool.execute('DELETE FROM communes WHERE id = ?', [id]);
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: 'Commune non trouvée.' });
-    }
-    res.status(200).json({ message: 'Commune supprimée avec succès.' });
+    await connection.beginTransaction();
+
+    // D'abord supprimer les communes (qui dépendent des villes)
+    const [communesResult] = await connection.execute('DELETE FROM communes');
+    // Ensuite supprimer les villes
+    const [villesResult] = await connection.execute('DELETE FROM villes');
+
+    await connection.commit();
+
+    res.status(200).json({
+      message: `Supprimé ${villesResult.affectedRows} ville(s) et ${communesResult.affectedRows} commune(s).`,
+      villesDeleted: villesResult.affectedRows,
+      communesDeleted: communesResult.affectedRows
+    });
   } catch (error) {
-    console.error("Erreur deleteCommune:", error);
+    await connection.rollback();
+    console.error("Erreur clearAllCommunesAndVilles:", error);
     res.status(500).json({ message: 'Erreur serveur.' });
+  } finally {
+    connection.release();
   }
 };
 
@@ -912,5 +924,256 @@ exports.verifyAdminRecharge = async (req, res) => {
   } catch (error) {
     console.error("Erreur verify:", error);
     return res.status(500).json({ message: "Erreur serveur." });
+  }
+};
+
+// ===== NOUVELLE SECTION : GESTION DES COMMUNES (RENOMMAGE) =====
+
+// --- RENOMMER UNE COMMUNE ---
+exports.updateCommune = async (req, res) => {
+  const { id } = req.params;
+  const { nom } = req.body;
+
+  if (!nom || !nom.trim()) {
+    return res.status(400).json({ message: 'Le nouveau nom de la commune est requis.' });
+  }
+
+  try {
+    // Vérifier si la commune existe
+    const [existing] = await pool.execute('SELECT id FROM communes WHERE id = ?', [id]);
+    if (existing.length === 0) {
+      return res.status(404).json({ message: 'Commune non trouvée.' });
+    }
+
+    // Mettre à jour le nom
+    await pool.execute('UPDATE communes SET nom = ?, updated_at = NOW() WHERE id = ?', [nom.trim(), id]);
+
+    res.status(200).json({
+      message: 'Commune renommée avec succès.',
+      id: parseInt(id),
+      nom: nom.trim()
+    });
+  } catch (error) {
+    console.error("Erreur updateCommune:", error);
+    res.status(500).json({ message: 'Erreur serveur.' });
+  }
+};
+
+// --- IMPORT EN MASSE DES COMMUNES ---
+exports.bulkImportCommunes = async (req, res) => {
+  const { communes } = req.body; // Array de { nom, id_ville } ou { nom, nom_ville }
+
+  if (!communes || !Array.isArray(communes) || communes.length === 0) {
+    return res.status(400).json({ message: 'Un tableau de communes est requis.' });
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    let imported = 0;
+    let skipped = 0;
+    const errors = [];
+
+    for (const commune of communes) {
+      try {
+        let villeId = commune.id_ville;
+
+        // Si on a un nom de ville au lieu de l'ID, chercher ou créer la ville
+        if (!villeId && commune.nom_ville) {
+          const [villeRows] = await connection.execute(
+            'SELECT id FROM villes WHERE LOWER(nom) = LOWER(?)',
+            [commune.nom_ville]
+          );
+
+          if (villeRows.length > 0) {
+            villeId = villeRows[0].id;
+          } else {
+            // Créer la ville si elle n'existe pas
+            const [result] = await connection.execute(
+              'INSERT INTO villes (nom) VALUES (?)',
+              [commune.nom_ville]
+            );
+            villeId = result.insertId;
+          }
+        }
+
+        if (!villeId) {
+          errors.push(`Commune "${commune.nom}" ignorée : ville non spécifiée.`);
+          skipped++;
+          continue;
+        }
+
+        // Vérifier si la commune existe déjà pour cette ville
+        const [existingCommune] = await connection.execute(
+          'SELECT id FROM communes WHERE LOWER(nom) = LOWER(?) AND id_ville = ?',
+          [commune.nom, villeId]
+        );
+
+        if (existingCommune.length > 0) {
+          skipped++;
+          continue;
+        }
+
+        // Insérer la commune
+        await connection.execute(
+          'INSERT INTO communes (nom, id_ville) VALUES (?, ?)',
+          [commune.nom, villeId]
+        );
+        imported++;
+
+      } catch (err) {
+        errors.push(`Erreur pour "${commune.nom}": ${err.message}`);
+        skipped++;
+      }
+    }
+
+    await connection.commit();
+
+    res.status(200).json({
+      message: `Import terminé : ${imported} commune(s) ajoutée(s), ${skipped} ignorée(s).`,
+      imported,
+      skipped,
+      errors: errors.slice(0, 10) // Limiter les erreurs affichées
+    });
+
+  } catch (error) {
+    await connection.rollback();
+    console.error("Erreur bulkImportCommunes:", error);
+    res.status(500).json({ message: 'Erreur serveur lors de l\'import.' });
+  } finally {
+    connection.release();
+  }
+};
+
+// ===== NOUVELLE SECTION : GESTION DES PACKS =====
+
+// --- RÉCUPÉRER TOUS LES PACKS ---
+exports.getAllPacks = async (req, res) => {
+  try {
+    const [packs] = await pool.execute(
+      'SELECT id, nom_pack, duree_min_secondes, duree_max_secondes, remuneration FROM packs ORDER BY id ASC'
+    );
+    res.status(200).json(packs);
+  } catch (error) {
+    console.error("Erreur getAllPacks:", error);
+    res.status(500).json({ message: 'Erreur serveur.' });
+  }
+};
+
+// --- CRÉER UN NOUVEAU PACK ---
+exports.createPack = async (req, res) => {
+  const { nom_pack, duree_min_secondes, duree_max_secondes, remuneration } = req.body;
+
+  // Validation
+  if (!nom_pack || duree_min_secondes === undefined || duree_max_secondes === undefined || remuneration === undefined) {
+    return res.status(400).json({ message: 'Tous les champs sont requis (nom_pack, duree_min_secondes, duree_max_secondes, remuneration).' });
+  }
+
+  if (Number(duree_min_secondes) > Number(duree_max_secondes)) {
+    return res.status(400).json({ message: 'La durée minimale ne peut pas être supérieure à la durée maximale.' });
+  }
+
+  try {
+    // Vérifier si le nom existe déjà
+    const [existing] = await pool.execute('SELECT id FROM packs WHERE nom_pack = ?', [nom_pack]);
+    if (existing.length > 0) {
+      return res.status(409).json({ message: 'Un pack avec ce nom existe déjà.' });
+    }
+
+    const [result] = await pool.execute(
+      'INSERT INTO packs (nom_pack, duree_min_secondes, duree_max_secondes, remuneration) VALUES (?, ?, ?, ?)',
+      [nom_pack, Number(duree_min_secondes), Number(duree_max_secondes), Number(remuneration)]
+    );
+
+    res.status(201).json({
+      message: 'Pack créé avec succès.',
+      id: result.insertId,
+      nom_pack,
+      duree_min_secondes: Number(duree_min_secondes),
+      duree_max_secondes: Number(duree_max_secondes),
+      remuneration: Number(remuneration)
+    });
+
+  } catch (error) {
+    console.error("Erreur createPack:", error);
+    res.status(500).json({ message: 'Erreur serveur.' });
+  }
+};
+
+// --- MODIFIER UN PACK ---
+exports.updatePack = async (req, res) => {
+  const { id } = req.params;
+  const { nom_pack, duree_min_secondes, duree_max_secondes, remuneration } = req.body;
+
+  try {
+    // Vérifier si le pack existe
+    const [existing] = await pool.execute('SELECT * FROM packs WHERE id = ?', [id]);
+    if (existing.length === 0) {
+      return res.status(404).json({ message: 'Pack non trouvé.' });
+    }
+
+    const currentPack = existing[0];
+
+    // Utiliser les valeurs actuelles si non fournies
+    const newNomPack = nom_pack !== undefined ? nom_pack : currentPack.nom_pack;
+    const newDureeMin = duree_min_secondes !== undefined ? Number(duree_min_secondes) : currentPack.duree_min_secondes;
+    const newDureeMax = duree_max_secondes !== undefined ? Number(duree_max_secondes) : currentPack.duree_max_secondes;
+    const newRemuneration = remuneration !== undefined ? Number(remuneration) : currentPack.remuneration;
+
+    if (newDureeMin > newDureeMax) {
+      return res.status(400).json({ message: 'La durée minimale ne peut pas être supérieure à la durée maximale.' });
+    }
+
+    // Vérifier l'unicité du nom si modifié
+    if (nom_pack && nom_pack !== currentPack.nom_pack) {
+      const [nameCheck] = await pool.execute('SELECT id FROM packs WHERE nom_pack = ? AND id != ?', [nom_pack, id]);
+      if (nameCheck.length > 0) {
+        return res.status(409).json({ message: 'Un autre pack avec ce nom existe déjà.' });
+      }
+    }
+
+    await pool.execute(
+      'UPDATE packs SET nom_pack = ?, duree_min_secondes = ?, duree_max_secondes = ?, remuneration = ? WHERE id = ?',
+      [newNomPack, newDureeMin, newDureeMax, newRemuneration, id]
+    );
+
+    res.status(200).json({
+      message: 'Pack mis à jour avec succès.',
+      id: parseInt(id),
+      nom_pack: newNomPack,
+      duree_min_secondes: newDureeMin,
+      duree_max_secondes: newDureeMax,
+      remuneration: newRemuneration
+    });
+
+  } catch (error) {
+    console.error("Erreur updatePack:", error);
+    res.status(500).json({ message: 'Erreur serveur.' });
+  }
+};
+
+// --- SUPPRIMER UN PACK ---
+exports.deletePack = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    // Vérifier si des promotions utilisent ce pack
+    const [promoCheck] = await pool.execute('SELECT COUNT(*) as count FROM promotions WHERE id_pack = ?', [id]);
+    if (promoCheck[0].count > 0) {
+      return res.status(400).json({
+        message: `Ce pack est utilisé par ${promoCheck[0].count} promotion(s). Impossible de le supprimer.`
+      });
+    }
+
+    const [result] = await pool.execute('DELETE FROM packs WHERE id = ?', [id]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Pack non trouvé.' });
+    }
+
+    res.status(200).json({ message: 'Pack supprimé avec succès.' });
+  } catch (error) {
+    console.error("Erreur deletePack:", error);
+    res.status(500).json({ message: 'Erreur serveur.' });
   }
 };

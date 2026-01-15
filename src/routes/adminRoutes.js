@@ -40,8 +40,17 @@ router.delete('/admins/:id', protect, isSuperAdminMiddleware, adminController.de
 router.post('/villes', protect, isSuperAdminMiddleware, adminController.createVille);
 router.get('/villes', protect, isSuperAdminMiddleware, adminController.getAllVilles);
 router.post('/communes', protect, isSuperAdminMiddleware, adminController.createCommune);
-router.get('/communes', protect, isSuperAdminMiddleware, adminController.getAllCommunes); // Pour lister les communes créées
-router.delete('/communes/:id', protect, isSuperAdminMiddleware, adminController.deleteCommune); // <--- ROUTE AJOUTÉE
+router.get('/communes', protect, isSuperAdminMiddleware, adminController.getAllCommunes);
+router.post('/communes/bulk-import', protect, isSuperAdminMiddleware, adminController.bulkImportCommunes); // Import en masse
+router.delete('/communes/clear-all', protect, isSuperAdminMiddleware, adminController.clearAllCommunesAndVilles); // Vider tout - AVANT :id !
+router.delete('/communes/:id', protect, isSuperAdminMiddleware, adminController.deleteCommune);
+router.put('/communes/:id', protect, isSuperAdminMiddleware, adminController.updateCommune);
+
+// --- Routes pour la gestion des PACKS (SuperAdmin) ---
+router.get('/packs', protect, isSuperAdminMiddleware, adminController.getAllPacks);
+router.post('/packs', protect, isSuperAdminMiddleware, adminController.createPack);
+router.put('/packs/:id', protect, isSuperAdminMiddleware, adminController.updatePack);
+router.delete('/packs/:id', protect, isSuperAdminMiddleware, adminController.deletePack);
 // RECHARGEMENT COMPTE ADMIN
 router.post('/recharge', protect, isSuperAdminMiddleware, adminController.rechargeAdminAccount);
 // AJOUTER CETTE LIGNE :
