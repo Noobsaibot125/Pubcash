@@ -27,6 +27,7 @@ const initDatabase = async () => {
         await PackModel.createTable();
         await VilleModel.createTable();
         await SettingsModel.createTable();
+        await SettingsModel.initializeDefaultSettings(); // <--- Initialize defaults
 
         // 2. Dependent Tables (Level 1)
         await CommuneModel.createTable(); // Depends on Ville
